@@ -1,0 +1,3 @@
+target/release/*
+!target/release/solana-storage-rpc
+tmp/*

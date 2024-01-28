@@ -1,0 +1,37 @@
+[package]
+name = "solana-storage-proto"
+description = "Solana Storage Protobuf Definitions"
+documentation = "https://docs.rs/solana-storage-proto"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+bincode = { workspace = true }
+bs58 = { workspace = true }
+prost = { workspace = true }
+serde = { workspace = true }
+solana-account-decoder = { workspace = true }
+solana-sdk = { workspace = true }
+solana-transaction-status = { workspace = true }
+
+[dev-dependencies]
+enum-iterator = { workspace = true }
+
+[lib]
+crate-type = ["lib"]
+name = "solana_storage_proto"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[build-dependencies]
+tonic-build = { workspace = true }
+
+# windows users should install the protobuf compiler manually and set the PROTOC
+# envar to point to the installed binary
+[target."cfg(not(windows))".build-dependencies]
+protobuf-src = { workspace = true }

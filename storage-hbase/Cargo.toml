@@ -1,0 +1,58 @@
+[package]
+name = "solana-storage-hbase"
+version = { workspace = true }
+description = "Solana Storage HBase"
+repository = "https://github.com/solana-labs/solana"
+license = "Apache-2.0"
+homepage = "https://solana.com/"
+edition = "2021"
+
+[dependencies]
+async-trait = { workspace = true }
+hbase-thrift = "1.1.0"
+thrift = "0.15.0"
+
+backoff = { version = "0.4.0", features = ["tokio"] }
+bincode = "1.3.3"
+bytes = "1.2"
+bzip2 = "0.4.3"
+enum-iterator = "1.2.0"
+flate2 = "1.0.24"
+futures = "0.3.24"
+goauth = "0.13.1"
+http = "0.2.8"
+hyper = "0.14.20"
+hyper-proxy = "0.9.1"
+log = "0.4.17"
+prost = "0.11.0"
+prost-types = "0.11.1"
+serde = "1.0.144"
+serde_derive = "1.0.103"
+smpl_jwt = "0.7.1"
+
+solana-metrics = { workspace = true }
+solana-sdk = { workspace = true }
+solana-storage-adapter = { workspace = true }
+solana-storage-proto = { workspace = true }
+solana-transaction-status = { workspace = true }
+thiserror = "1.0"
+tokio = "1"
+tonic = { version = "0.8.0", features = ["tls", "transport"] }
+zstd = "0.11.2"
+
+# openssl is a dependency of the goauth and smpl_jwt crates, but explicitly
+# declare it here as well to activate the "vendored" feature that builds OpenSSL
+# statically...
+[target."cfg(not(windows))".dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+# ...except on Windows to avoid having to deal with getting CI past a build-time
+# Perl dependency
+[target."cfg(windows)".dependencies]
+openssl = { version = "0.10", features = [] }
+
+[lib]
+crate-type = ["lib"]
+name = "solana_storage_hbase"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]

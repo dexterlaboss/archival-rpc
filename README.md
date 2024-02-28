@@ -2,23 +2,37 @@
 
 Fast and resource-efficient Solana RPC service that does not require as many resources as a full Solana validator node. Focusing on data retrieval endpoints and currently supporting all archival-related RPC calls.
 
-Lite RPC also introduces alternative storage with a self-hosted HBase database, which is 10x+ cheaper than BigTable and you can run it on-prem to achieve sub 10ms RPC calls to methods like `getSignaturesForAddress`. It reuses Solana Labs Rust validator code without any data structure changes, which means that you can just import BigTable backup to HBase and you are ready to go.
+Lite RPC also introduces alternative storage with a self-hosted HBase database, which is 10x+ cheaper than BigTable and you can run it on-prem to achieve sub 10ms RPC calls to methods like getSignaturesForAddress. It reuses Solana Labs Rust validator code without any data structure changes, which means that you can just import BigTable backup to HBase and you are ready to go.
 
-Data ingestion is separated into another service https://github.com/dexterlaboss/solana-lite-rpc-storage-ingestor so that Lite RPC could have as less dependencies as possible and could scale into thousands of instances.
+## Overview
 
-## Setup
+The LiteRPC is structured into two primary components for enhanced scalability and separation of concerns:
 
-In the upcoming weeks/months, we will add prebuild releases, Docker images, Helm charts (including HBase), and another bit for easier setup and maintenance. For those who are impatient, you can follow the steps:
+- **RPC Server**: This is the repository you're currently viewing. It serves as the backbone for communication.
+- **Ingestor Module**: Located at [solana-lite-rpc-storage-ingestor](https://github.com/dexterlaboss/solana-lite-rpc-storage-ingestor), this component is dedicated to data ingestion. 
+By segregating data ingestion from the serving layer, we provide a scalable architecture that allows each component to scale independently based on demand. The ingestor module is equipped to pull full, unparsed blocks directly from a Kafka topic, with ongoing efforts to integrate GRPC support for enhanced data interchange.
 
-- clone and compile Lite RPC
-- if you have a working BigTable instance you can just stop here and connect to it and start saving traffic from expensive validators.
 
-if you want a full on-prem setup you will need to go extra steps:
+![How we run it!](https://dexterlab.com/content/images/2024/02/Screenshot-2024-02-28-at-11.12.42-2.png "How we run it")
 
-- setup HBase cluster
-- write raw blocks to Kafka topic, which can be achieved with Greyser plugins
-- clone and compile data ingestion service `dexterlaboss/solana-lite-rpc-storage-ingestor`
-- provide storage-ingestor HBase credentials and Kafka topic which has full blocks stream
+
+## Quick Setup Overview
+
+In the near future, we're introducing several resources to simplify the setup and maintenance process, including prebuild releases, Docker images, and Helm charts (with HBase support). Below is a brief guide for those eager to get started. Detailed documentation will follow.
+
+**Starting with Lite RPC**
+
+- **Clone and compile Lite RPC**: This is your first step towards setting up.
+- **Connecting to BigTable**: If you already have a BigTable instance, you can simply connect to it to offload expensive validator resources.
+
+**Full On-Prem Setup**
+
+For a comprehensive on-premise setup, additional steps are required:
+- **HBase and Kafka**: Ensure you have an operational HBase cluster and a Kafka instance.
+- **Writing to Kafka**: Utilize Greyser plugins or scripts to push raw blocks to your Kafka topic.
+- **Data Ingestion**: Clone and compile the dexterlaboss/solana-lite-rpc-storage-ingestor.
+- **Configuration**: Provide the storage-ingestor with HBase credentials and specify the Kafka topic to stream full blocks. 
+Stay tuned for more detailed guides on each step of the process.
 
 ## Startup args
 

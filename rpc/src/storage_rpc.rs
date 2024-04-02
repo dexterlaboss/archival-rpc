@@ -52,7 +52,8 @@ use {
         BlockEncodingOptions, ConfirmedBlock, ConfirmedTransactionStatusWithSignature,
         ConfirmedTransactionWithStatusMeta, EncodedConfirmedTransactionWithStatusMeta,
         TransactionConfirmationStatus, TransactionStatus,
-        UiConfirmedBlock, UiTransactionEncoding,
+        UiConfirmedBlock,
+        UiTransactionEncoding,
     },
     std::{
         collections::{
@@ -185,7 +186,7 @@ impl JsonRpcRequestProcessor {
             let config = config
                 .map(|config| config.convert_to_current())
                 .unwrap_or_default();
-            let encoding = config.encoding.unwrap_or(UiTransactionEncoding::Json);
+            let encoding = config.encoding.unwrap_or(UiTransactionEncoding::Json).into();
             let encoding_options = BlockEncodingOptions {
                 transaction_details: config.transaction_details.unwrap_or_default(),
                 show_rewards: config.rewards.unwrap_or(true),

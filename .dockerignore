@@ -1,3 +1,4 @@
-target/release/*
+target/*
 !target/release/solana-storage-rpc
 tmp/*
+.git

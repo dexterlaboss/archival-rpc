@@ -1,3 +1,4 @@
+use solana_sdk::clock::Slot;
 use {
     crate::{StoredExtendedRewards, StoredTransactionStatusMeta},
     solana_account_decoder::parse_token::{real_number_string_trimmed, UiTokenAmount},
@@ -18,6 +19,7 @@ use {
         ConfirmedBlock, InnerInstruction, InnerInstructions, Reward, RewardType,
         TransactionByAddrInfo, TransactionStatusMeta, TransactionTokenBalance,
         TransactionWithStatusMeta, VersionedConfirmedBlock, VersionedTransactionWithStatusMeta,
+        ConfirmedTransactionWithStatusMeta,
     },
     std::{
         convert::{TryFrom, TryInto},
@@ -31,6 +33,7 @@ pub mod generated {
         env!("OUT_DIR"),
         "/solana.storage.confirmed_block.rs"
     ));
+    // include!("../proto/solana.storage.confirmed_block.rs");
 }
 
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -39,6 +42,7 @@ pub mod tx_by_addr {
         env!("OUT_DIR"),
         "/solana.storage.transaction_by_addr.rs"
     ));
+    // include!("../proto/solana.storage.transaction_by_addr.rs");
 }
 
 impl From<Vec<Reward>> for generated::Rewards {
@@ -206,6 +210,25 @@ impl TryFrom<generated::ConfirmedTransaction> for TransactionWithStatusMeta {
                     .into_legacy_transaction()
                     .expect("meta is required for versioned transactions"),
             ),
+        })
+    }
+}
+
+impl TryFrom<generated::ConfirmedTransactionWithStatusMeta> for ConfirmedTransactionWithStatusMeta {
+    type Error = bincode::Error;
+
+    fn try_from(value: generated::ConfirmedTransactionWithStatusMeta) -> Result<Self, Self::Error> {
+        // let slot = Slot::try_from(value.slot).map_err(|_| BincodeError::new("Failed to convert slot"))?; // Adjust error handling as needed
+        let tx_with_meta = match value.tx_with_meta {
+            Some(tx) => TransactionWithStatusMeta::try_from(tx)?,
+            None => return Err(bincode::Error::new(bincode::ErrorKind::Custom("transaction data is required".into()))),
+        };
+        // let block_time = value.block_time; // Assuming this can be directly assigned
+
+        Ok(ConfirmedTransactionWithStatusMeta {
+            slot: value.slot,
+            tx_with_meta,
+            block_time: value.block_time.map(|generated::UnixTimestamp { timestamp }| timestamp),
         })
     }
 }

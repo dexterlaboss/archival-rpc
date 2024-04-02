@@ -167,7 +167,7 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .takes_value(true)
                 .default_value(&default_args.rpc_port)
                 .validator(port_validator)
-                .help("Enable JSON RPC on this port, and the next port for the RPC websocket"),
+                .help("Port for the RPC service"),
         )
         .arg(
             Arg::with_name("enable_rpc_transaction_history")
@@ -181,8 +181,7 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .long("enable-rpc-hbase-ledger-storage")
                 .takes_value(false)
                 .hidden(true)
-                .help("Fetch historical transaction info from a HBase instance \
-                       as a fallback to local ledger data"),
+                .help("Fetch historical transaction info from a HBase instance"),
         )
         .arg(
             Arg::with_name("rpc_hbase_address")
@@ -207,8 +206,7 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .long("enable-rpc-bigtable-ledger-storage")
                 .takes_value(false)
                 .hidden(true)
-                .help("Fetch historical transaction info from a BigTable instance \
-                       as a fallback to local ledger data"),
+                .help("Fetch historical transaction info from a BigTable instance"),
         )
         .arg(
             Arg::with_name("rpc_bigtable_instance_name")
@@ -216,7 +214,7 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .takes_value(true)
                 .value_name("INSTANCE_NAME")
                 .default_value(&default_args.rpc_bigtable_instance_name)
-                .help("Name of the Bigtable instance to upload to")
+                .help("Name of the Bigtable instance to use")
         )
         .arg(
             Arg::with_name("rpc_bigtable_app_profile_id")
@@ -224,7 +222,7 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .takes_value(true)
                 .value_name("APP_PROFILE_ID")
                 .default_value(&default_args.rpc_bigtable_app_profile_id)
-                .help("Bigtable application profile id to use in requests")
+                .help("Bigtable application profile id to use for requests")
         )
         .arg(
             Arg::with_name("rpc_bigtable_timeout")
@@ -242,7 +240,7 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .takes_value(true)
                 .validator(solana_net_utils::is_host)
                 .default_value("0.0.0.0")
-                .help("IP address to bind the launcher ports [default: 0.0.0.0]"),
+                .help("IP address to bind the rpc service [default: 0.0.0.0]"),
         )
         .arg(
             Arg::with_name("log_messages_bytes_limit")

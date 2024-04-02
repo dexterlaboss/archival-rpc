@@ -14,7 +14,7 @@ use {
     },
     solana_storage_proto::convert::{generated, tx_by_addr},
     solana_transaction_status::{
-        extract_and_fmt_memos, ConfirmedBlock, ConfirmedTransactionStatusWithSignature,
+        extract_memos::extract_and_fmt_memos, ConfirmedBlock, ConfirmedTransactionStatusWithSignature,
         ConfirmedTransactionWithStatusMeta,
         TransactionByAddrInfo,
         TransactionStatus,
@@ -23,6 +23,7 @@ use {
     solana_storage_adapter::{
         Error, Result, LedgerStorageAdapter,
         StoredConfirmedBlock,
+        StoredConfirmedTransactionWithStatusMeta,
         TransactionInfo,
         LegacyTransactionByAddrInfo,
         slot_to_blocks_key,
@@ -33,7 +34,7 @@ use {
         collections::{
             HashMap,
         },
-        convert::TryInto,
+        convert::{TryFrom, TryInto},
         time::{Duration, Instant},
         boxed::Box,
     },
@@ -179,6 +180,21 @@ impl LedgerStorageAdapter for LedgerStorage {
         })
     }
 
+    // async fn get_full_tx(&self, signature: &Signature) -> Result<ConfirmedTransaction> {
+    //     let mut hbase = self.connection.client();
+    //     let transaction = hbase
+    //         .get_protobuf_or_bincode_cell::<StoredConfirmedBlockTransaction, generated::ConfirmedTransaction>(
+    //             "tx_full",
+    //             signature.to_string(),
+    //         )
+    //         .await
+    //         .map_err(|err| match err {
+    //             hbase::Error::RowNotFound => Error::SignatureNotFound,
+    //             _ => err.into(),
+    //         })?;
+    //     Ok(transaction.into())
+    // }
+
     async fn get_signature_status(&self, signature: &Signature) -> Result<TransactionStatus> {
         debug!(
             "LedgerStorage::get_signature_status request received: {:?}",
@@ -194,6 +210,38 @@ impl LedgerStorageAdapter for LedgerStorage {
                 _ => err.into(),
             })?;
         Ok(transaction_info.into())
+    }
+
+    async fn get_full_transaction(
+        &self,
+        signature: &Signature,
+    ) -> Result<Option<ConfirmedTransactionWithStatusMeta>> {
+        debug!(
+            "LedgerStorage::get_full_transaction request received: {:?}",
+            signature
+        );
+        inc_new_counter_debug!("storage-hbase-query", 1);
+        let mut hbase = self.connection.client();
+
+        let tx_cell_data = hbase
+            .get_protobuf_or_bincode_cell::<StoredConfirmedTransactionWithStatusMeta, generated::ConfirmedTransactionWithStatusMeta>(
+                "tx_full",
+                signature.to_string(),
+            )
+            .await
+            .map_err(|err| match err {
+                hbase::Error::RowNotFound => Error::SignatureNotFound,
+                _ => err.into(),
+            })?;
+        info!("Got full tx cell data");
+
+        Ok(match tx_cell_data {
+            hbase::CellData::Bincode(tx) => Some(tx.into()),
+            hbase::CellData::Protobuf(tx) => Some(tx.try_into().map_err(|_err| {
+                info!("Protobuf object is corrupted");
+                hbase::Error::ObjectCorrupt(format!("tx_full/{}", signature.to_string()))
+            })?),
+        })
     }
 
     /// Fetch a confirmed transaction

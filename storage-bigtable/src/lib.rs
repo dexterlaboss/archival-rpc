@@ -492,6 +492,13 @@ impl LedgerStorageAdapter for LedgerStorage {
         Ok(transaction_info.into())
     }
 
+    async fn get_full_transaction(
+        &self,
+        signature: &Signature,
+    ) -> Result<Option<ConfirmedTransactionWithStatusMeta>> {
+        self.get_confirmed_transaction(signature).await
+    }
+
     /// Fetch a confirmed transaction
     async fn get_confirmed_transaction(
         &self,

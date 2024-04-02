@@ -17,6 +17,12 @@ message ConfirmedTransaction {
     TransactionStatusMeta meta = 2;
 }
 
+message ConfirmedTransactionWithStatusMeta {
+    uint64 slot = 1;
+    ConfirmedTransaction tx_with_meta = 2;
+    UnixTimestamp block_time = 3;
+}
+
 message Transaction {
     repeated bytes signatures = 1;
     Message message = 2;

@@ -106,6 +106,34 @@ pub struct StoredConfirmedBlock {
     block_height: Option<u64>,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct StoredConfirmedTransactionWithStatusMeta {
+    pub slot: Slot,
+    // pub tx_with_meta: TransactionWithStatusMeta,
+    pub tx_with_meta: StoredConfirmedBlockTransaction,
+    pub block_time: Option<UnixTimestamp>,
+}
+
+impl From<ConfirmedTransactionWithStatusMeta> for StoredConfirmedTransactionWithStatusMeta {
+    fn from(value: ConfirmedTransactionWithStatusMeta) -> Self {
+        Self {
+            slot: value.slot,
+            tx_with_meta: value.tx_with_meta.into(),
+            block_time: value.block_time,
+        }
+    }
+}
+
+impl From<StoredConfirmedTransactionWithStatusMeta> for ConfirmedTransactionWithStatusMeta {
+    fn from(value: StoredConfirmedTransactionWithStatusMeta) -> Self {
+        Self {
+            slot: value.slot,
+            tx_with_meta: value.tx_with_meta.into(),
+            block_time: value.block_time,
+        }
+    }
+}
+
 #[cfg(test)]
 impl From<ConfirmedBlock> for StoredConfirmedBlock {
     fn from(confirmed_block: ConfirmedBlock) -> Self {
@@ -161,7 +189,7 @@ pub struct StoredConfirmedBlockTransaction {
     meta: Option<StoredConfirmedBlockTransactionStatusMeta>,
 }
 
-#[cfg(test)]
+// #[cfg(test)]
 impl From<TransactionWithStatusMeta> for StoredConfirmedBlockTransaction {
     fn from(value: TransactionWithStatusMeta) -> Self {
         match value {
@@ -282,6 +310,12 @@ impl From<Reward> for StoredConfirmedBlockReward {
     }
 }
 
+// impl From<VersionedTransactionWithStatusMeta> for TransactionWithStatusMeta {
+//     fn from(item: VersionedTransactionWithStatusMeta) -> Self {
+//         TransactionWithStatusMeta::Complete(item)
+//     }
+// }
+
 // A serialized `TransactionInfo` is stored in the `tx` table
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub struct TransactionInfo {
@@ -362,6 +396,11 @@ pub trait LedgerStorageAdapter: Send + Sync {
     async fn get_confirmed_block(&self, slot: Slot) -> Result<ConfirmedBlock>;
 
     async fn get_signature_status(&self, signature: &Signature) -> Result<TransactionStatus>;
+
+    async fn get_full_transaction(
+        &self,
+        signature: &Signature,
+    ) -> Result<Option<ConfirmedTransactionWithStatusMeta>>;
 
     async fn get_confirmed_transaction(
         &self,

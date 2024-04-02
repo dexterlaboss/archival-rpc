@@ -262,7 +262,7 @@ impl HBase {
         scan.columns = Some(vec!["x".as_bytes().to_vec()]);
         scan.batch_size = Some(rows_limit as i32);
         scan.timestamp = None;
-        scan.filter_string = Some(b"ColumnPaginationFilter(1,0)".to_vec());
+        // scan.filter_string = Some(b"ColumnPaginationFilter(1,0)".to_vec());
 
         let scan_id = self.client.scanner_open_with_scan(
             table_name.as_bytes().to_vec(),

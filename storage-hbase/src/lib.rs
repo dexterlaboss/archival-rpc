@@ -34,7 +34,7 @@ use {
         collections::{
             HashMap,
         },
-        convert::{TryFrom, TryInto},
+        convert::{TryInto},
         time::{Duration, Instant},
         boxed::Box,
     },

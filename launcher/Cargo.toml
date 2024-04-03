@@ -26,7 +26,7 @@ indicatif = { workspace = true }
 #lazy_static = { workspace = true }
 #libloading = { workspace = true }
 log = { workspace = true }
-#num_cpus = { workspace = true }
+num_cpus = { workspace = true }
 #rand = { workspace = true }
 #rayon = { workspace = true }
 #serde = { workspace = true }

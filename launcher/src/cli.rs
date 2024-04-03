@@ -8,6 +8,7 @@ use {
     solana_clap_utils::{
         input_validators::{
             is_parsable,
+            is_niceness_adjustment_valid,
         },
     },
     solana_net_utils::{
@@ -18,6 +19,7 @@ use {
         rpc_port,
     },
 };
+use solana_rpc::storage_rpc::MAX_REQUEST_BODY_SIZE;
 
 /// Deprecated argument description should be moved into the [`deprecated_arguments()`] function,
 /// expressed as an instance of this type.
@@ -243,6 +245,34 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .help("IP address to bind the rpc service [default: 0.0.0.0]"),
         )
         .arg(
+            Arg::with_name("rpc_threads")
+                .long("rpc-threads")
+                .value_name("NUMBER")
+                .validator(is_parsable::<usize>)
+                .takes_value(true)
+                .default_value(&default_args.rpc_threads)
+                .help("Number of threads to use for servicing RPC requests"),
+        )
+        .arg(
+            Arg::with_name("rpc_niceness_adj")
+                .long("rpc-niceness-adjustment")
+                .value_name("ADJUSTMENT")
+                .takes_value(true)
+                .validator(is_niceness_adjustment_valid)
+                .default_value(&default_args.rpc_niceness_adjustment)
+                .help("Add this value to niceness of RPC threads. Negative value \
+                      increases priority, positive value decreases priority.")
+        )
+        .arg(
+            Arg::with_name("rpc_max_request_body_size")
+                .long("rpc-max-request-body-size")
+                .value_name("BYTES")
+                .takes_value(true)
+                .validator(is_parsable::<usize>)
+                .default_value(&default_args.rpc_max_request_body_size)
+                .help("The maximum request body size accepted by rpc service"),
+        )
+        .arg(
             Arg::with_name("log_messages_bytes_limit")
                 .long("log-messages-bytes-limit")
                 .value_name("BYTES")
@@ -256,6 +286,9 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
 pub struct DefaultStorageRpcArgs {
     pub rpc_port: String,
     pub rpc_hbase_timeout: String,
+    pub rpc_threads: String,
+    pub rpc_niceness_adjustment: String,
+    pub rpc_max_request_body_size: String,
     pub rpc_bigtable_timeout: String,
     pub rpc_bigtable_instance_name: String,
     pub rpc_bigtable_app_profile_id: String,
@@ -266,6 +299,9 @@ impl DefaultStorageRpcArgs {
         DefaultStorageRpcArgs {
             rpc_port: rpc_port::DEFAULT_RPC_PORT.to_string(),
             rpc_hbase_timeout: "5".to_string(),
+            rpc_threads: num_cpus::get().to_string(),
+            rpc_niceness_adjustment: "0".to_string(),
+            rpc_max_request_body_size: MAX_REQUEST_BODY_SIZE.to_string(),
             rpc_bigtable_timeout: "30".to_string(),
             rpc_bigtable_instance_name: solana_storage_bigtable::DEFAULT_INSTANCE_NAME.to_string(),
             rpc_bigtable_app_profile_id: solana_storage_bigtable::DEFAULT_APP_PROFILE_ID

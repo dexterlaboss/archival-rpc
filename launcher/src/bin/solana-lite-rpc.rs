@@ -93,6 +93,8 @@ fn main() {
         })
     });
 
+    // let full_api = matches.is_present("full_rpc_api");
+
     let mut builder = RpcNodeBuilder::default();
 
     let rpc_hbase_config = Some(RpcHBaseConfig {
@@ -106,6 +108,15 @@ fn main() {
     builder.rpc_config(JsonRpcConfig {
         enable_rpc_transaction_history: true,
         rpc_hbase_config,
+        // full_api,
+        obsolete_v1_7_api: matches.is_present("obsolete_v1_7_rpc_api"),
+        rpc_threads: value_t_or_exit!(matches, "rpc_threads", usize),
+        rpc_niceness_adj: value_t_or_exit!(matches, "rpc_niceness_adj", i8),
+        max_request_body_size: Some(value_t_or_exit!(
+                matches,
+                "rpc_max_request_body_size",
+                usize
+            )),
         ..JsonRpcConfig::default_for_storage_rpc()
     });
 

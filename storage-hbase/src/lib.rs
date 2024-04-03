@@ -138,7 +138,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             .get_row_keys(
                 "blocks",
                 Some(slot_to_blocks_key(start_slot)),
-                None,
+                Some(slot_to_blocks_key(start_slot + limit as u64)), // None,
                 limit as i64,
             )
             .await?;

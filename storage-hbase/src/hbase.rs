@@ -185,6 +185,7 @@ impl HBase {
         scan.batch_size = Some(rows_limit as i32);
         scan.timestamp = None;
         scan.caching = rows_limit.try_into().ok();
+        scan.filter_string = Some(b"ColumnPaginationFilter(1,0)".to_vec());
 
         let scan_id = self.client.scanner_open_with_scan(
             table_name.as_bytes().to_vec(),
@@ -254,15 +255,16 @@ impl HBase {
         let mut scan = TScan::default();
 
         scan.start_row = start_at.map(|start_key| {
-            start_key.as_bytes().to_vec()
+            start_key.into_bytes()
         });
         scan.stop_row = end_at.map(|end_key| {
-            end_key.as_bytes().to_vec()
+            end_key.into_bytes()
         });
         scan.columns = Some(vec!["x".as_bytes().to_vec()]);
         scan.batch_size = Some(rows_limit as i32);
         scan.timestamp = None;
-        // scan.filter_string = Some(b"ColumnPaginationFilter(1,0)".to_vec());
+        scan.caching = rows_limit.try_into().ok();
+        scan.filter_string = Some(b"ColumnPaginationFilter(1,0)".to_vec());
 
         let scan_id = self.client.scanner_open_with_scan(
             table_name.as_bytes().to_vec(),

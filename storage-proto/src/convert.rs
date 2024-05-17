@@ -594,14 +594,19 @@ impl From<TransactionTokenBalance> for generated::TokenBalance {
 impl From<generated::TokenBalance> for TransactionTokenBalance {
     fn from(value: generated::TokenBalance) -> Self {
         let ui_token_amount = value.ui_token_amount.unwrap_or_default();
+        let ui_amount_float = ui_token_amount.ui_amount_string.parse::<f64>().ok();
         Self {
             account_index: value.account_index as u8,
             mint: value.mint,
             ui_token_amount: UiTokenAmount {
-                ui_amount: if (ui_token_amount.ui_amount - f64::default()).abs() > f64::EPSILON {
-                    Some(ui_token_amount.ui_amount)
+                ui_amount: if let Some(parsed_float) = ui_amount_float {
+                    Some(parsed_float)
                 } else {
-                    None
+                    if (ui_token_amount.ui_amount - f64::default()).abs() > f64::EPSILON {
+                        Some(ui_token_amount.ui_amount)
+                    } else {
+                        None
+                    }
                 },
                 decimals: ui_token_amount.decimals as u8,
                 amount: ui_token_amount.amount.clone(),

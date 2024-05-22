@@ -10,6 +10,7 @@ use {
         },
     },
     thiserror::Error,
+    solana_storage_proto::convert::{generated},
     hbase_thrift::hbase::{BatchMutation, HbaseSyncClient, THbaseSyncClient, TScan},
     hbase_thrift::{
         MutationBuilder
@@ -185,7 +186,7 @@ impl HBase {
         scan.batch_size = Some(rows_limit as i32);
         scan.timestamp = None;
         scan.caching = rows_limit.try_into().ok();
-        scan.filter_string = Some(b"ColumnPaginationFilter(1,0)".to_vec());
+        scan.filter_string = Some(b"KeyOnlyFilter()".to_vec());
 
         let scan_id = self.client.scanner_open_with_scan(
             table_name.as_bytes().to_vec(),
@@ -322,7 +323,7 @@ impl HBase {
         table_name: &str,
         row_key: RowKey,
     ) -> Result<RowData> {
-        println!("Trying to get row data with key {:?} from table {:?}", row_key, table_name);
+        info!("Trying to get row data with key {:?} from table {:?}", row_key, table_name);
 
         let row_result = self.client.get_row_with_columns(
             table_name.as_bytes().to_vec(),
@@ -370,6 +371,18 @@ impl HBase {
     {
         let row_data = self.get_single_row_data(table, key.clone()).await?;
         deserialize_protobuf_or_bincode_cell_data(&row_data, table, key)
+    }
+
+    pub async fn get_protobuf_or_bincode_cell_serialized<B, P>(
+        &mut self,
+        table: &str,
+        key: RowKey,
+    ) -> Result<RowData>
+        where
+            B: serde::de::DeserializeOwned,
+            P: prost::Message + Default,
+    {
+        self.get_single_row_data(table, key.clone()).await
     }
 
     pub async fn put_bincode_cells<T>(
@@ -451,9 +464,11 @@ pub(crate) fn deserialize_protobuf_or_bincode_cell_data<B, P>(
         Ok(result) => {
             return Ok(CellData::Protobuf(result))
         },
-        Err(err) => match err {
-            Error::ObjectNotFound(_) => {}
-            _ => return Err(err),
+        Err(err) => {
+            match err {
+                Error::ObjectNotFound(_) => {}
+                _ => return Err(err),
+            }
         },
     }
     deserialize_bincode_cell_data(row_data, table, key).map(CellData::Bincode)

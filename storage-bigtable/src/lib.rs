@@ -197,7 +197,7 @@ impl LedgerStorage {
         );
         self.stats.increment_num_queries();
         let mut bigtable = self.connection.client();
-        let row_keys = slots.iter().copied().map(slot_to_blocks_key);
+        let row_keys = slots.iter().copied().map(|slot| slot_to_blocks_key(slot, false));
         let data = bigtable
             .get_protobuf_or_bincode_cells("blocks", row_keys)
             .await?
@@ -226,7 +226,7 @@ impl LedgerStorage {
         let mut bigtable = self.connection.client();
 
         let block_exists = bigtable
-            .row_key_exists("blocks", slot_to_blocks_key(slot))
+            .row_key_exists("blocks", slot_to_blocks_key(slot, false))
             .await?;
 
         Ok(block_exists)
@@ -298,7 +298,7 @@ impl LedgerStorage {
     pub async fn delete_confirmed_block(&self, slot: Slot, dry_run: bool) -> Result<()> {
         let mut addresses: HashSet<&Pubkey> = HashSet::new();
         let mut expected_tx_infos: HashMap<String, UploadedTransaction> = HashMap::new();
-        let confirmed_block = self.get_confirmed_block(slot).await?;
+        let confirmed_block = self.get_confirmed_block(slot, false).await?;
         for (index, transaction_with_meta) in confirmed_block.transactions.iter().enumerate() {
             match transaction_with_meta {
                 TransactionWithStatusMeta::MissingMetadata(transaction) => {
@@ -396,7 +396,7 @@ impl LedgerStorage {
             }
 
             self.connection
-                .delete_rows_with_retry("blocks", &[slot_to_blocks_key(slot)])
+                .delete_rows_with_retry("blocks", &[slot_to_blocks_key(slot, false)])
                 .await?;
         }
 
@@ -441,7 +441,7 @@ impl LedgerStorageAdapter for LedgerStorage {
         let blocks = bigtable
             .get_row_keys(
                 "blocks",
-                Some(slot_to_blocks_key(start_slot)),
+                Some(slot_to_blocks_key(start_slot, false)),
                 None,
                 limit as i64,
             )
@@ -450,7 +450,7 @@ impl LedgerStorageAdapter for LedgerStorage {
     }
 
     /// Fetch the confirmed block from the desired slot
-    async fn get_confirmed_block(&self, slot: Slot) -> Result<ConfirmedBlock> {
+    async fn get_confirmed_block(&self, slot: Slot, use_cache: bool) -> Result<ConfirmedBlock> {
         trace!(
             "LedgerStorage::get_confirmed_block request received: {:?}",
             slot
@@ -460,7 +460,7 @@ impl LedgerStorageAdapter for LedgerStorage {
         let block_cell_data = bigtable
             .get_protobuf_or_bincode_cell::<StoredConfirmedBlock, generated::ConfirmedBlock>(
                 "blocks",
-                slot_to_blocks_key(slot),
+                slot_to_blocks_key(slot, false),
             )
             .await
             .map_err(|err| match err {
@@ -470,7 +470,7 @@ impl LedgerStorageAdapter for LedgerStorage {
         Ok(match block_cell_data {
             bigtable::CellData::Bincode(block) => block.into(),
             bigtable::CellData::Protobuf(block) => block.try_into().map_err(|_err| {
-                bigtable::Error::ObjectCorrupt(format!("blocks/{}", slot_to_blocks_key(slot)))
+                bigtable::Error::ObjectCorrupt(format!("blocks/{}", slot_to_blocks_key(slot, false)))
             })?,
         })
     }
@@ -521,7 +521,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             })?;
 
         // Load the block and return the transaction
-        let block = self.get_confirmed_block(slot).await?;
+        let block = self.get_confirmed_block(slot, true).await?;
         match block.transactions.into_iter().nth(index as usize) {
             None => {
                 // report this somewhere actionable?
@@ -800,7 +800,7 @@ impl LedgerStorageAdapter for LedgerStorage {
         // Store the block itself last, after all other metadata about the block has been
         // successfully stored.  This avoids partial uploaded blocks from becoming visible to
         // `get_confirmed_block()` and `get_confirmed_blocks()`
-        let blocks_cells = [(slot_to_blocks_key(slot), confirmed_block.into())];
+        let blocks_cells = [(slot_to_blocks_key(slot, false), confirmed_block.into())];
         bytes_written += self
             .connection
             .put_protobuf_cells_with_retry::<generated::ConfirmedBlock>("blocks", &blocks_cells)

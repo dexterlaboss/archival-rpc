@@ -30,6 +30,7 @@ use {
         slot_to_tx_by_addr_key,
         key_to_slot,
     },
+    moka::sync::Cache,
     std::{
         collections::{
             HashMap,
@@ -37,8 +38,11 @@ use {
         convert::{TryInto},
         time::{Duration, Instant},
         boxed::Box,
+        num::NonZeroUsize,
     },
 };
+use crate::hbase::RowData;
+use crate::hbase::deserialize_protobuf_or_bincode_cell_data;
 
 #[macro_use]
 extern crate solana_metrics;
@@ -63,6 +67,8 @@ pub struct LedgerStorageConfig {
     pub read_only: bool,
     pub timeout: Option<std::time::Duration>,
     pub address: String,
+    pub block_cache: Option<NonZeroUsize>,
+    pub use_md5_row_key_salt: bool,
 }
 
 impl Default for LedgerStorageConfig {
@@ -71,6 +77,8 @@ impl Default for LedgerStorageConfig {
             read_only: true,
             timeout: None,
             address: DEFAULT_ADDRESS.to_string(),
+            block_cache: None,
+            use_md5_row_key_salt: false,
         }
     }
 }
@@ -78,6 +86,8 @@ impl Default for LedgerStorageConfig {
 #[derive(Clone)]
 pub struct LedgerStorage {
     connection: hbase::HBaseConnection,
+    cache: Option<Cache<Slot, RowData>>,
+    use_md5_row_key_salt: bool,
 }
 
 impl LedgerStorage {
@@ -98,6 +108,8 @@ impl LedgerStorage {
             read_only,
             timeout,
             address,
+            block_cache,
+            use_md5_row_key_salt,
         } = config;
         let connection = hbase::HBaseConnection::new(
             address.as_str(),
@@ -105,7 +117,23 @@ impl LedgerStorage {
             timeout,
         )
             .await?;
-        Ok(Self { connection })
+
+        // info!("Creating block cache instance");
+
+        let cache = if let Some(capacity) = block_cache {
+            // let lru_cache = LruCache::new(capacity);
+            // Some(Arc::new(Mutex::new(lru_cache)))
+            let lru_cache = Cache::new(capacity.get() as u64);
+            Some(lru_cache)
+        } else {
+            None
+        };
+
+        Ok(Self {
+            connection,
+            cache,
+            use_md5_row_key_salt,
+        })
     }
 }
 
@@ -132,13 +160,18 @@ impl LedgerStorageAdapter for LedgerStorage {
             "LedgerStorage::get_confirmed_blocks request received: {:?} {:?}",
             start_slot, limit
         );
+
+        if self.use_md5_row_key_salt {
+            return Ok(vec![]);
+        }
+
         inc_new_counter_debug!("storage-hbase-query", 1);
         let mut hbase = self.connection.client();
         let blocks = hbase
             .get_row_keys(
                 "blocks",
-                Some(slot_to_blocks_key(start_slot)),
-                Some(slot_to_blocks_key(start_slot + limit as u64)), // None,
+                Some(slot_to_blocks_key(start_slot, false)),
+                Some(slot_to_blocks_key(start_slot + limit as u64, false)), // None,
                 limit as i64,
             )
             .await?;
@@ -146,7 +179,7 @@ impl LedgerStorageAdapter for LedgerStorage {
     }
 
     /// Fetch the confirmed block from the desired slot
-    async fn get_confirmed_block(&self, slot: Slot) -> Result<ConfirmedBlock> {
+    async fn get_confirmed_block(&self, slot: Slot, use_cache: bool) -> Result<ConfirmedBlock> {
         info!("get_confirmed_block request received");
 
         debug!(
@@ -155,29 +188,78 @@ impl LedgerStorageAdapter for LedgerStorage {
         );
         inc_new_counter_debug!("storage-hbase-query", 1);
         let start = Instant::now();
+
         let mut hbase = self.connection.client();
         let duration: Duration = start.elapsed();
         info!("HBase connection took {:?}", duration);
 
-        let block_cell_data = hbase
-            .get_protobuf_or_bincode_cell::<StoredConfirmedBlock, generated::ConfirmedBlock>(
+        if use_cache {
+            if let Some(cache) = &self.cache {
+                if let Some(serialized_block) = cache.get(&slot) {
+                    // print_cache_info(&locked_cache);
+                    info!("Using result from cache for {}", slot);
+                    let block_cell_data =
+                        deserialize_protobuf_or_bincode_cell_data::<StoredConfirmedBlock, generated::ConfirmedBlock>(
+                            &serialized_block,
+                            "blocks",
+                            slot_to_blocks_key(slot, false)
+                        )
+                            .map_err(|err| match err {
+                                hbase::Error::RowNotFound => Error::BlockNotFound(slot),
+                                _ => err.into(),
+                            })?;
+
+                    let block: ConfirmedBlock = match block_cell_data {
+                        hbase::CellData::Bincode(block) => block.into(),
+                        hbase::CellData::Protobuf(block) => block.try_into().map_err(|_err| {
+                            info!("Protobuf object is corrupted");
+                            hbase::Error::ObjectCorrupt(format!("blocks/{}", slot_to_blocks_key(slot, false)))
+                        })?,
+                    };
+
+                    return Ok(block.clone());
+                } else {
+                    // print_cache_info(&locked_cache);
+                }
+            }
+        }
+
+        let block_cell_data_serialized = hbase
+            .get_protobuf_or_bincode_cell_serialized::<StoredConfirmedBlock, generated::ConfirmedBlock>(
                 "blocks",
-                slot_to_blocks_key(slot),
+                slot_to_blocks_key(slot, false),
             )
             .await
-            .map_err(|err| match err {
-                hbase::Error::RowNotFound => Error::BlockNotFound(slot),
-                _ => err.into(),
+            .map_err(|err| {
+                match err {
+                    hbase::Error::RowNotFound => Error::BlockNotFound(slot),
+                    _ => err.into(),
+                }
             })?;
-        info!("Got block cell data");
 
-        Ok(match block_cell_data {
+        let block_cell_data =
+            deserialize_protobuf_or_bincode_cell_data::<StoredConfirmedBlock, generated::ConfirmedBlock>(
+                &block_cell_data_serialized,
+                "blocks",
+                slot_to_blocks_key(slot, false),
+            )?;
+
+        let block: ConfirmedBlock = match block_cell_data {
             hbase::CellData::Bincode(block) => block.into(),
             hbase::CellData::Protobuf(block) => block.try_into().map_err(|_err| {
                 info!("Protobuf object is corrupted");
-                hbase::Error::ObjectCorrupt(format!("blocks/{}", slot_to_blocks_key(slot)))
+                hbase::Error::ObjectCorrupt(format!("blocks/{}", slot_to_blocks_key(slot, false)))
             })?,
-        })
+        };
+
+        if use_cache {
+            if let Some(cache) = &self.cache {
+                info!("Storing block {} in cache", slot);
+                cache.insert(slot, block_cell_data_serialized.clone());
+            }
+        }
+
+        Ok(block)
     }
 
     // async fn get_full_tx(&self, signature: &Signature) -> Result<ConfirmedTransaction> {
@@ -221,6 +303,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             signature
         );
         inc_new_counter_debug!("storage-hbase-query", 1);
+
         let mut hbase = self.connection.client();
 
         let tx_cell_data = hbase
@@ -254,6 +337,11 @@ impl LedgerStorageAdapter for LedgerStorage {
             signature
         );
         inc_new_counter_debug!("storage-hbase-query", 1);
+
+        if let Ok(Some(full_tx)) = self.get_full_transaction(signature).await {
+            return Ok(Some(full_tx));
+        }
+
         let mut hbase = self.connection.client();
 
         // Figure out which block the transaction is located in
@@ -266,7 +354,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             })?;
 
         // Load the block and return the transaction
-        let block = self.get_confirmed_block(slot).await?;
+        let block = self.get_confirmed_block(slot, true).await?;
         match block.transactions.into_iter().nth(index as usize) {
             None => {
                 // report this somewhere actionable?
@@ -561,7 +649,7 @@ impl LedgerStorageAdapter for LedgerStorage {
         // Store the block itself last, after all other metadata about the block has been
         // successfully stored.  This avoids partial uploaded blocks from becoming visible to
         // `get_confirmed_block()` and `get_confirmed_blocks()`
-        let blocks_cells = [(slot_to_blocks_key(slot), confirmed_block.into())];
+        let blocks_cells = [(slot_to_blocks_key(slot, false), confirmed_block.into())];
         bytes_written += self
             .connection
             .put_protobuf_cells_with_retry::<generated::ConfirmedBlock>("blocks", &blocks_cells)
@@ -580,3 +668,21 @@ impl LedgerStorageAdapter for LedgerStorage {
     }
 }
 
+// fn print_cache_info(cache: &MutexGuard<LruCache<Slot, ConfirmedBlock>>) {
+//     if cache.len() > 0 {
+//         println!("Cache Size: {}", cache.len());
+//         println!("Cache Keys: {:?}", cache.iter().map(|(k, _v)| *k).collect::<Vec<_>>());
+//     } else {
+//         println!("Cache is empty");
+//     }
+// }
+
+// fn print_cache_info(cache: &MutexGuard<LruCache<Slot, ConfirmedBlock>>) {
+//     // let locked_cache = cache.lock().await;  // Handle error more appropriately in production
+//     if cache.len() > 0 {
+//         println!("Cache Size: {}", cache.len());
+//         println!("Cache Keys: {:?}", cache.iter().map(|(k, _v)| *k).collect::<Vec<_>>());
+//     } else {
+//         println!("Cache is empty");
+//     }
+// }

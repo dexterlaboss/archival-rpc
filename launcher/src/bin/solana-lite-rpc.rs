@@ -1,4 +1,4 @@
-
+use std::num::NonZeroUsize;
 use {
     clap::{
         value_t_or_exit,
@@ -101,6 +101,16 @@ fn main() {
         enable_hbase_ledger_upload: false,
         hbase_address: value_t_or_exit!(matches, "rpc_hbase_address", String),
         timeout: None,
+        block_cache: if matches.is_present("block_cache") {
+            Some(value_t_or_exit!(
+                matches,
+                "block_cache",
+                NonZeroUsize
+            ))
+        } else {
+            None
+        },
+        use_md5_row_key_salt: false,
     });
 
     builder.rpc_port(rpc_port);

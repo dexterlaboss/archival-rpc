@@ -64,6 +64,7 @@ use {
             RwLock,
         },
         time::{Duration, Instant},
+        num::NonZeroUsize,
     },
 };
 
@@ -93,6 +94,7 @@ pub struct JsonRpcConfig {
     pub full_api: bool,
     pub obsolete_v1_7_api: bool,
     pub max_request_body_size: Option<usize>,
+    // pub block_cache: Option<NonZeroUsize>,
 }
 
 impl JsonRpcConfig {
@@ -109,6 +111,8 @@ pub struct RpcHBaseConfig {
     pub enable_hbase_ledger_upload: bool,
     pub hbase_address: String,
     pub timeout: Option<Duration>,
+    pub block_cache: Option<NonZeroUsize>,
+    pub use_md5_row_key_salt: bool,
 }
 
 impl Default for RpcHBaseConfig {
@@ -118,6 +122,8 @@ impl Default for RpcHBaseConfig {
             enable_hbase_ledger_upload: false,
             hbase_address,
             timeout: None,
+            block_cache: None,
+            use_md5_row_key_salt: false,
         }
     }
 }
@@ -170,6 +176,9 @@ impl JsonRpcRequestProcessor {
         result: &std::result::Result<T, solana_storage_adapter::Error>,
     ) -> Result<()> {
         info!("Checking hbase block");
+        if let Err(e) = result {
+            info!("Block error: {}", e);
+        }
         if let Err(solana_storage_adapter::Error::BlockNotFound(slot)) = result {
             return Err(RpcCustomError::LongTermStorageSlotSkipped { slot: *slot }.into());
         }
@@ -212,7 +221,7 @@ impl JsonRpcRequestProcessor {
                 Ok(encoded_block)
             };
             if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
-                let hbase_result = hbase_ledger_storage.get_confirmed_block(slot).await;
+                let hbase_result = hbase_ledger_storage.get_confirmed_block(slot, false).await;
                 info!("Got confirmed block");
 
                 self.check_hbase_result(&hbase_result)?;
@@ -235,7 +244,7 @@ impl JsonRpcRequestProcessor {
 
         if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
             let start = Instant::now();
-            let hbase_result = hbase_ledger_storage.get_confirmed_block(slot).await;
+            let hbase_result = hbase_ledger_storage.get_confirmed_block(slot, false).await;
             let duration: Duration = start.elapsed();
             println!("HBase request took {:?}", duration);
 
@@ -318,7 +327,7 @@ impl JsonRpcRequestProcessor {
         }
 
         if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
-            let hbase_result = hbase_ledger_storage.get_confirmed_block(slot).await;
+            let hbase_result = hbase_ledger_storage.get_confirmed_block(slot, false).await;
             self.check_hbase_result(&hbase_result)?;
             return Ok(hbase_result
                 .ok()

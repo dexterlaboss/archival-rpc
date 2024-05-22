@@ -73,6 +73,7 @@ serde_json = "1.0.96"
 serde_with = { version = "2.3.3", default-features = false }
 signal-hook = "0.3.15"
 smpl_jwt = "0.7.1"
+md5 = "0.7"
 
 solana-account-decoder = "=1.16.15"
 solana-clap-utils = "=1.16.15"

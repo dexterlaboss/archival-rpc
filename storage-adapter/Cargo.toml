@@ -16,6 +16,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
+md5 = { workspace = true }
 
 [lib]
 crate-type = ["lib"]

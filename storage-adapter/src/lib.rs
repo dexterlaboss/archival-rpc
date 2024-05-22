@@ -30,6 +30,7 @@ use {
     thiserror::Error,
     tokio::task::JoinError,
 };
+use md5::{compute};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -66,8 +67,18 @@ pub fn slot_to_key(slot: Slot) -> String {
     format!("{slot:016x}")
 }
 
-pub fn slot_to_blocks_key(slot: Slot) -> String {
-    slot_to_key(slot)
+pub fn slot_to_blocks_key(slot: Slot, use_md5: bool) -> String {
+    let slot_hex = slot_to_key(slot);
+
+    if use_md5 {
+        let hash_result = md5::compute(&slot_hex);
+        let truncated_hash_hex = format!("{:x}", hash_result)[..10].to_string();
+
+        // Concatenate the truncated hash with the slot hex to form the row key
+        format!("{}{}", truncated_hash_hex, slot_hex)
+    } else {
+        slot_hex
+    }
 }
 
 pub fn slot_to_tx_by_addr_key(slot: Slot) -> String {
@@ -393,7 +404,7 @@ pub trait LedgerStorageAdapter: Send + Sync {
 
     async fn get_confirmed_blocks(&self, start_slot: Slot, limit: usize) -> Result<Vec<Slot>>;
 
-    async fn get_confirmed_block(&self, slot: Slot) -> Result<ConfirmedBlock>;
+    async fn get_confirmed_block(&self, slot: Slot, use_cache: bool) -> Result<ConfirmedBlock>;
 
     async fn get_signature_status(&self, signature: &Signature) -> Result<TransactionStatus>;
 

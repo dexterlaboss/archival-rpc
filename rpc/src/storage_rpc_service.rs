@@ -127,12 +127,16 @@ impl JsonRpcService {
                             enable_hbase_ledger_upload: false,
                             ref hbase_address,
                             timeout,
+                            block_cache,
+                            use_md5_row_key_salt,
                         }) = config.rpc_hbase_config
             {
                 let hbase_config = solana_storage_hbase::LedgerStorageConfig {
                     read_only: true,
                     timeout,
                     address: hbase_address.clone(),
+                    block_cache,
+                    use_md5_row_key_salt,
                 };
                 runtime
                     .block_on(solana_storage_hbase::LedgerStorage::new_with_config(hbase_config))

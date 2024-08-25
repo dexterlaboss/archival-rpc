@@ -142,6 +142,11 @@ impl LedgerStorageAdapter for LedgerStorage {
     /// Return the available slot that contains a block
     async fn get_first_available_block(&self) -> Result<Option<Slot>> {
         debug!("LedgerStorage::get_first_available_block request received");
+
+        if self.use_md5_row_key_salt {
+            return Ok(Some(0));
+        }
+
         inc_new_counter_debug!("storage-hbase-query", 1);
         let mut hbase = self.connection.client();
         let blocks = hbase.get_row_keys("blocks", None, None, 1).await?;

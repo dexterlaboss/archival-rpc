@@ -168,6 +168,7 @@ impl HBase {
         start_at: Option<RowKey>,
         end_at: Option<RowKey>,
         rows_limit: i64,
+        reversed: bool,
     ) -> Result<Vec<RowKey>> {
         if rows_limit == 0 {
             return Ok(vec![]);
@@ -186,6 +187,7 @@ impl HBase {
         scan.batch_size = Some(rows_limit as i32);
         scan.timestamp = None;
         scan.caching = rows_limit.try_into().ok();
+        scan.reversed = Some(reversed);
         scan.filter_string = Some(b"KeyOnlyFilter()".to_vec());
 
         let scan_id = self.client.scanner_open_with_scan(
@@ -448,6 +450,15 @@ impl HBase {
         self.client.mutate_rows(table_name.as_bytes().to_vec(), mutation_batches, Default::default())?;
 
         Ok(())
+    }
+
+    pub async fn get_last_row_key(&mut self, table_name: &str) -> Result<String> {
+        let row_keys = self.get_row_keys(table_name, None, None, 1, true).await?;
+        if let Some(last_row_key) = row_keys.first() {
+            Ok(last_row_key.clone())
+        } else {
+            Err(Error::RowNotFound)
+        }
     }
 }
 

@@ -687,6 +687,13 @@ impl LedgerStorageAdapter for LedgerStorage {
         Ok(infos)
     }
 
+    async fn get_latest_stored_slot(&self) -> Result<Slot> {
+        Err(Error::StorageBackendError(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Method not supported",
+        ))))
+    }
+
     /// Upload a new confirmed block and associated meta data.
     async fn upload_confirmed_block(
         &self,

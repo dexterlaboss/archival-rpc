@@ -149,7 +149,7 @@ impl LedgerStorageAdapter for LedgerStorage {
 
         inc_new_counter_debug!("storage-hbase-query", 1);
         let mut hbase = self.connection.client();
-        let blocks = hbase.get_row_keys("blocks", None, None, 1).await?;
+        let blocks = hbase.get_row_keys("blocks", None, None, 1, false).await?;
         if blocks.is_empty() {
             return Ok(None);
         }
@@ -178,6 +178,7 @@ impl LedgerStorageAdapter for LedgerStorage {
                 Some(slot_to_blocks_key(start_slot, false)),
                 Some(slot_to_blocks_key(start_slot + limit as u64, false)), // None,
                 limit as i64,
+                false
             )
             .await?;
         Ok(blocks.into_iter().filter_map(|s| key_to_slot(&s)).collect())
@@ -542,6 +543,27 @@ impl LedgerStorageAdapter for LedgerStorage {
         println!("get signatures for address results: {:?}", infos);
 
         Ok(infos)
+    }
+
+    async fn get_latest_stored_slot(&self) -> Result<Slot> {
+        // inc_new_counter_debug!("storage-hbase-query", 1);
+        let mut hbase = self.connection.client();
+        match hbase.get_last_row_key("blocks").await {
+            Ok(last_row_key) => {
+                match key_to_slot(&last_row_key) {
+                    Some(slot) => Ok(slot),
+                    None => Err(Error::StorageBackendError(Box::new(hbase::Error::ObjectCorrupt(format!(
+                        "Failed to parse row key '{}' as slot number",
+                        last_row_key
+                    ))))),
+                }
+            },
+            Err(hbase::Error::RowNotFound) => {
+                // If the table is empty, return a default value (e.g., first_slot - 1)
+                Ok(Slot::default())
+            },
+            Err(e) => Err(Error::StorageBackendError(Box::new(e))),
+        }
     }
 
     async fn upload_confirmed_block(

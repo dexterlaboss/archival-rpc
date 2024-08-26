@@ -479,6 +479,15 @@ impl JsonRpcRequestProcessor {
         }
         Slot::default()
     }
+
+    pub async fn get_slot(&self, config: RpcContextConfig) -> Slot {
+        if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
+            if let Ok(hbase_slot) = hbase_ledger_storage.get_latest_stored_slot().await {
+                return hbase_slot;
+            }
+        }
+        Slot::default()
+    }
 }
 
 
@@ -494,6 +503,9 @@ pub mod storage_rpc_minimal {
 
         #[rpc(meta, name = "getVersion")]
         fn get_version(&self, meta: Self::Metadata) -> Result<RpcVersionInfo>;
+
+        #[rpc(meta, name = "getSlot")]
+        fn get_slot(&self, meta: Self::Metadata, config: Option<RpcContextConfig>) -> BoxFuture<Result<Slot>>;
     }
 
     pub struct MinimalImpl;
@@ -511,6 +523,13 @@ pub mod storage_rpc_minimal {
                 solana_core: version.to_string(),
                 feature_set: Some(version.feature_set),
             })
+        }
+
+        fn get_slot(&self, meta: Self::Metadata, config: Option<RpcContextConfig>) -> BoxFuture<Result<Slot>> {
+            debug!("get_slot rpc request received");
+            // meta.get_slot(config.unwrap_or_default()).await
+
+            Box::pin(async move { Ok(meta.get_slot(config.unwrap_or_default()).await) })
         }
     }
 }

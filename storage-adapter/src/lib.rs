@@ -426,6 +426,8 @@ pub trait LedgerStorageAdapter: Send + Sync {
         limit: usize,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>>;
 
+    async fn get_latest_stored_slot(&self) -> Result<Slot>;
+
     async fn upload_confirmed_block(
         &self,
         slot: Slot,

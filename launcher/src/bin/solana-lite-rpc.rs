@@ -110,7 +110,7 @@ fn main() {
         } else {
             None
         },
-        use_md5_row_key_salt: false,
+        use_md5_row_key_salt: matches.is_present("use_md5_row_key_salt"),
     });
 
     builder.rpc_port(rpc_port);

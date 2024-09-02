@@ -11,7 +11,17 @@ use {
     },
     crossbeam_channel::unbounded,
     jsonrpc_core::{
-        MetaIoHandler
+        MetaIoHandler,
+        Middleware,
+        Params,
+        Value,
+        Call,
+        Output,
+        Response,
+        Metadata,
+        // Result,
+        // Error,
+        RpcMethodSimple,
     },
     jsonrpc_http_server::{
         hyper, AccessControlAllowOrigin, CloseHandle, DomainsValidation, RequestMiddleware,
@@ -30,7 +40,115 @@ use {
         },
         thread::{self, Builder, JoinHandle},
     },
+    prometheus::{
+        Opts,
+        HistogramVec,
+        IntCounterVec,
+        register_histogram_vec,
+        register_int_counter_vec
+    },
 };
+use std::future::Future;
+use futures::future::{self, Either, FutureExt, BoxFuture};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+lazy_static::lazy_static! {
+    static ref JSONRPC_REQUESTS_TOTAL: IntCounterVec = register_int_counter_vec!(
+        Opts::new("requests_total", "Total number of RPC requests."),
+        &["method"]
+    ).unwrap();
+
+    static ref JSONRPC_REQUEST_DURATION_SECONDS: HistogramVec = register_histogram_vec!(
+        "request_duration_seconds",
+        "The RPC request latencies in seconds.",
+        &["method"],
+        vec![0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0] // Buckets in seconds
+    ).unwrap();
+}
+
+struct MetricsMiddleware;
+
+// impl<M: Metadata> Middleware<M> for MetricsMiddleware {
+//     type CallFuture = BoxFuture<'static, Option<Output>>;
+//
+//     type Future = Either<BoxFuture<'static, Option<Response>>, Self::CallFuture>;
+//
+//     fn on_call<F, X>(
+//         &self,
+//         call: Call,
+//         meta: M,
+//         next: F,
+//     ) -> Self::Future
+//         where
+//             F: FnOnce(Call, M) -> X + Send + Sync,
+//             X: Future<Output = Option<Output>> + Send + 'static,
+//     {
+//         let method_name = match &call {
+//             Call::MethodCall(method_call) => method_call.method.clone(),
+//             _ => "unknown".to_string(),
+//         };
+//
+//         // Increment the request counter
+//         JSONRPC_REQUESTS_TOTAL.with_label_values(&[&method_name]).inc();
+//
+//         // Start timing the request
+//         let timer = JSONRPC_REQUEST_DURATION_SECONDS.with_label_values(&[&method_name]).start_timer();
+//
+//         let future = next(call.clone(), meta);
+//
+//         let wrapped_future = async move {
+//             let result = future.await;
+//             timer.observe_duration(); // Stop timing when the request is done
+
+//             result.map(|output| call.into_response(output))
+//         }
+//             .boxed();
+//
+//         Either::Left(wrapped_future)
+//     }
+// }
+
+// impl Call {
+//     // Manually convert Output to Response using the original Call's context
+//     fn into_response(self, output: Output) -> Response {
+//         match self {
+//             Call::MethodCall(method_call) => {
+//                 Response::Single(jsonrpc_core::response::Output::Success(jsonrpc_core::Success {
+//                     jsonrpc: method_call.jsonrpc,
+//                     result: output.result,
+//                     id: method_call.id,
+//                 }))
+//             }
+//             _ => Response::Single(jsonrpc_core::response::Output::Failure(jsonrpc_core::Failure {
+//                 jsonrpc: None,
+//                 error: jsonrpc_core::Error::method_not_found(),
+//                 id: jsonrpc_core::Id::Null,
+//             })),
+//         }
+//     }
+// }
+
+// fn with_metrics<F>(method_name: &str, f: F) -> impl Fn(Params) -> Result<Value>
+//     where
+//         F: Fn(Params) -> Result<Value> + Send + Sync + 'static,
+// {
+//     move |params: Params| {
+//         // Increment the request counter with the method label
+//         JSONRPC_REQUESTS_TOTAL.with_label_values(&[method_name]).inc();
+//
+//         // Start measuring the duration with the method label
+//         let timer = JSONRPC_REQUEST_DURATION_SECONDS.with_label_values(&[method_name]).start_timer();
+//
+//         // Execute the actual method logic
+//         let result = f(params);
+//
+//         // Stop the timer and record the duration
+//         timer.observe_duration();
+//
+//         result
+//     }
+// }
 
 pub struct JsonRpcService {
     thread_hdl: JoinHandle<()>,
@@ -174,12 +292,26 @@ impl JsonRpcService {
                 renice_this_thread(rpc_niceness_adj).unwrap();
 
                 let mut io = MetaIoHandler::default();
+                // let mut io = MetaIoHandler::with_middleware(MetricsMiddleware);
 
                 io.extend_with(storage_rpc_minimal::MinimalImpl.to_delegate());
                 if full_api {
                     io.extend_with(storage_rpc_full::FullImpl.to_delegate());
                     io.extend_with(storage_rpc_deprecated_v1_7::DeprecatedV1_7Impl.to_delegate());
                 }
+
+                // io.extend_with(storage_rpc_minimal::MinimalImpl.to_delegate().map(|method| {
+                //     with_metrics("MinimalImpl", method)
+                // }));
+                //
+                // if full_api {
+                //     io.extend_with(storage_rpc_full::FullImpl.to_delegate().map(|method| {
+                //         with_metrics("FullImpl", method)
+                //     }));
+                //     io.extend_with(storage_rpc_deprecated_v1_7::DeprecatedV1_7Impl.to_delegate().map(|method| {
+                //         with_metrics("DeprecatedV1_7Impl", method)
+                //     }));
+                // }
 
                 let request_middleware = RpcRequestMiddleware::new(
                     log_path,

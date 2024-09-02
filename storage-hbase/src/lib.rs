@@ -208,7 +208,7 @@ impl LedgerStorageAdapter for LedgerStorage {
                         deserialize_protobuf_or_bincode_cell_data::<StoredConfirmedBlock, generated::ConfirmedBlock>(
                             &serialized_block,
                             "blocks",
-                            slot_to_blocks_key(slot, false)
+                            slot_to_blocks_key(slot, self.use_md5_row_key_salt)
                         )
                             .map_err(|err| match err {
                                 hbase::Error::RowNotFound => Error::BlockNotFound(slot),
@@ -219,7 +219,7 @@ impl LedgerStorageAdapter for LedgerStorage {
                         hbase::CellData::Bincode(block) => block.into(),
                         hbase::CellData::Protobuf(block) => block.try_into().map_err(|_err| {
                             info!("Protobuf object is corrupted");
-                            hbase::Error::ObjectCorrupt(format!("blocks/{}", slot_to_blocks_key(slot, false)))
+                            hbase::Error::ObjectCorrupt(format!("blocks/{}", slot_to_blocks_key(slot, self.use_md5_row_key_salt)))
                         })?,
                     };
 
@@ -233,7 +233,7 @@ impl LedgerStorageAdapter for LedgerStorage {
         let block_cell_data_serialized = hbase
             .get_protobuf_or_bincode_cell_serialized::<StoredConfirmedBlock, generated::ConfirmedBlock>(
                 "blocks",
-                slot_to_blocks_key(slot, false),
+                slot_to_blocks_key(slot, self.use_md5_row_key_salt),
             )
             .await
             .map_err(|err| {
@@ -247,14 +247,14 @@ impl LedgerStorageAdapter for LedgerStorage {
             deserialize_protobuf_or_bincode_cell_data::<StoredConfirmedBlock, generated::ConfirmedBlock>(
                 &block_cell_data_serialized,
                 "blocks",
-                slot_to_blocks_key(slot, false),
+                slot_to_blocks_key(slot, self.use_md5_row_key_salt),
             )?;
 
         let block: ConfirmedBlock = match block_cell_data {
             hbase::CellData::Bincode(block) => block.into(),
             hbase::CellData::Protobuf(block) => block.try_into().map_err(|_err| {
                 info!("Protobuf object is corrupted");
-                hbase::Error::ObjectCorrupt(format!("blocks/{}", slot_to_blocks_key(slot, false)))
+                hbase::Error::ObjectCorrupt(format!("blocks/{}", slot_to_blocks_key(slot, self.use_md5_row_key_salt)))
             })?,
         };
 
@@ -676,7 +676,7 @@ impl LedgerStorageAdapter for LedgerStorage {
         // Store the block itself last, after all other metadata about the block has been
         // successfully stored.  This avoids partial uploaded blocks from becoming visible to
         // `get_confirmed_block()` and `get_confirmed_blocks()`
-        let blocks_cells = [(slot_to_blocks_key(slot, false), confirmed_block.into())];
+        let blocks_cells = [(slot_to_blocks_key(slot, self.use_md5_row_key_salt), confirmed_block.into())];
         bytes_written += self
             .connection
             .put_protobuf_cells_with_retry::<generated::ConfirmedBlock>("blocks", &blocks_cells)

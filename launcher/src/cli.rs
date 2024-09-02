@@ -289,6 +289,12 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .takes_value(true)
                 .help("Maximum number of bytes written to the program log before truncation")
         )
+        .arg(
+            Arg::with_name("use_md5_row_key_salt")
+                .long("use-md5-row-key-salt")
+                .takes_value(false)
+                .help("Enable md5 row key salt for block HBase keys."),
+        )
     ;
 }
 

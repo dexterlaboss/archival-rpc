@@ -145,7 +145,7 @@ impl LedgerStorage {
 
         let cache_client = if enable_full_tx_cache {
             if let Some(cache_addr) = cache_address {
-                let cache_addr = format!("{}?timeout=1&protocol=ascii", cache_addr);
+                let cache_addr = format!("memcache://{}?timeout=1&protocol=ascii", cache_addr);
 
                 let cache_addr_clone = cache_addr.clone();
 
@@ -552,7 +552,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             )
             .await?;
 
-        println!("Starting the for loop");
+        debug!("Starting the for loop");
 
         'outer: for (row_key, data) in tx_by_addr_data {
             let slot = !key_to_slot(&row_key[address_prefix.len()..]).ok_or_else(|| {
@@ -561,7 +561,7 @@ impl LedgerStorageAdapter for LedgerStorage {
                 ))
             })?;
 
-            println!("Deserializing tx-by-addr data in the loop");
+            debug!("Deserializing tx-by-addr data in the loop");
 
             let deserialized_cell_data = hbase::deserialize_protobuf_or_bincode_cell_data::<
                 Vec<LegacyTransactionByAddrInfo>,
@@ -585,7 +585,7 @@ impl LedgerStorageAdapter for LedgerStorage {
 
             cell_data.reverse();
 
-            println!("Starting the loop over the cell data");
+            debug!("Starting the loop over the cell data");
 
             for tx_by_addr_info in cell_data.into_iter() {
                 // Filter out records before `before_transaction_index`

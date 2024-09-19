@@ -111,6 +111,16 @@ fn main() {
             None
         },
         use_md5_row_key_salt: matches.is_present("use_md5_row_key_salt"),
+        enable_full_tx_cache: matches.is_present("enable_full_tx_cache"),
+        cache_address: if matches.is_present("cache_address") {
+            Some(value_t_or_exit!(
+                matches,
+                "cache_address",
+                String
+            ))
+        } else {
+            None
+        },
     });
 
     builder.rpc_port(rpc_port);

@@ -1,6 +1,13 @@
 #![allow(clippy::integer_arithmetic)]
 
 use {
+    crate::{
+        hbase::{
+            RowData,
+            deserialize_protobuf_or_bincode_cell_data,
+        },
+        compression::{decompress},
+    },
     async_trait::async_trait,
     log::*,
     solana_metrics::{datapoint_info, inc_new_counter_debug},
@@ -40,9 +47,10 @@ use {
         boxed::Box,
         num::NonZeroUsize,
     },
+    memcache::Client as MemcacheClient,
+    bincode,
+    tokio::task,
 };
-use crate::hbase::RowData;
-use crate::hbase::deserialize_protobuf_or_bincode_cell_data;
 
 #[macro_use]
 extern crate solana_metrics;
@@ -60,7 +68,17 @@ impl std::convert::From<hbase::Error> for Error {
     }
 }
 
+#[derive(Debug)]
+pub struct CacheErrorWrapper(pub memcache::MemcacheError);
+
+impl From<CacheErrorWrapper> for Error {
+    fn from(err: CacheErrorWrapper) -> Self {
+        Error::CacheError(err.0.to_string())  // Convert the wrapped error into a string and store it in CacheError
+    }
+}
+
 pub const DEFAULT_ADDRESS: &str = "127.0.0.1:9090";
+pub const DEFAULT_CACHE_ADDRESS: &str = "127.0.0.1:11211";
 
 #[derive(Debug)]
 pub struct LedgerStorageConfig {
@@ -69,6 +87,8 @@ pub struct LedgerStorageConfig {
     pub address: String,
     pub block_cache: Option<NonZeroUsize>,
     pub use_md5_row_key_salt: bool,
+    pub enable_full_tx_cache: bool,
+    pub cache_address: Option<String>,
 }
 
 impl Default for LedgerStorageConfig {
@@ -79,6 +99,8 @@ impl Default for LedgerStorageConfig {
             address: DEFAULT_ADDRESS.to_string(),
             block_cache: None,
             use_md5_row_key_salt: false,
+            enable_full_tx_cache: false,
+            cache_address: Some(DEFAULT_ADDRESS.to_string())
         }
     }
 }
@@ -88,6 +110,7 @@ pub struct LedgerStorage {
     connection: hbase::HBaseConnection,
     cache: Option<Cache<Slot, RowData>>,
     use_md5_row_key_salt: bool,
+    cache_client: Option<MemcacheClient>,
 }
 
 impl LedgerStorage {
@@ -110,6 +133,8 @@ impl LedgerStorage {
             address,
             block_cache,
             use_md5_row_key_salt,
+            enable_full_tx_cache,
+            mut cache_address
         } = config;
         let connection = hbase::HBaseConnection::new(
             address.as_str(),
@@ -118,7 +143,29 @@ impl LedgerStorage {
         )
             .await?;
 
-        // info!("Creating block cache instance");
+        let cache_client = if enable_full_tx_cache {
+            if let Some(cache_addr) = cache_address {
+                let cache_addr = format!("{}?timeout=1&protocol=ascii", cache_addr);
+
+                let cache_addr_clone = cache_addr.clone();
+
+                match task::spawn_blocking(move || MemcacheClient::connect(cache_addr_clone.as_str())).await {
+                    Ok(Ok(client)) => Some(client),
+                    Ok(Err(e)) => {
+                        error!("Failed to connect to cache server at {}: {}", cache_addr, e);
+                        None
+                    },
+                    Err(e) => {
+                        error!("Tokio task join error while connecting to cache server: {}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         let cache = if let Some(capacity) = block_cache {
             // let lru_cache = LruCache::new(capacity);
@@ -133,6 +180,7 @@ impl LedgerStorage {
             connection,
             cache,
             use_md5_row_key_salt,
+            cache_client,
         })
     }
 }
@@ -339,9 +387,37 @@ impl LedgerStorageAdapter for LedgerStorage {
         signature: &Signature,
     ) -> Result<Option<ConfirmedTransactionWithStatusMeta>> {
         debug!(
-            "LedgerStorage::get_confirmed_transaction request received: {:?}",
-            signature
-        );
+        "LedgerStorage::get_confirmed_transaction request received: {:?}",
+        signature
+    );
+        if let Some(cache_client) = &self.cache_client {
+            let key = signature.to_string();
+            let key_clone = key.clone();
+            let cache_client_clone = cache_client.clone();
+
+            let result = tokio::task::spawn_blocking(move || {
+                cache_client_clone.get::<Vec<u8>>(&key_clone).map_err(CacheErrorWrapper)
+            })
+                .await
+                .map_err(Error::TokioJoinError)??;
+
+            if let Some(cached_bytes) = result {
+                let data = decompress(&cached_bytes).map_err(|e| {
+                    warn!("Failed to decompress transaction from cache for {}", key);
+                    Error::CacheError(format!("Decompression error: {}", e))
+                })?;
+
+                let tx = bincode::deserialize::<StoredConfirmedTransactionWithStatusMeta>(&data)
+                    .map_err(|e| {
+                        warn!("Failed to deserialize transaction from cache for {}", key);
+                        Error::CacheError(format!("Deserialization error: {}", e))
+                    })?;
+
+                info!("Transaction {} found in cache", key);
+                return Ok(Some(tx.into()));
+            }
+        }
+
         inc_new_counter_debug!("storage-hbase-query", 1);
 
         if let Ok(Some(full_tx)) = self.get_full_transaction(signature).await {
@@ -356,23 +432,22 @@ impl LedgerStorageAdapter for LedgerStorage {
             .await
             .map_err(|err| match err {
                 hbase::Error::RowNotFound => Error::SignatureNotFound,
-                _ => err.into(),
+                _ => Error::StorageBackendError(Box::new(err)),
             })?;
 
         // Load the block and return the transaction
         let block = self.get_confirmed_block(slot, true).await?;
         match block.transactions.into_iter().nth(index as usize) {
             None => {
-                // report this somewhere actionable?
                 warn!("Transaction info for {} is corrupt", signature);
                 Ok(None)
             }
             Some(tx_with_meta) => {
                 if tx_with_meta.transaction_signature() != signature {
                     warn!(
-                        "Transaction info or confirmed block for {} is corrupt",
-                        signature
-                    );
+                    "Transaction info or confirmed block for {} is corrupt",
+                    signature
+                );
                     Ok(None)
                 } else {
                     Ok(Some(ConfirmedTransactionWithStatusMeta {

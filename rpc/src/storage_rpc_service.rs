@@ -210,6 +210,8 @@ impl JsonRpcService {
                             timeout,
                             block_cache,
                             use_md5_row_key_salt,
+                            enable_full_tx_cache,
+                            ref cache_address,
                         }) = config.rpc_hbase_config
             {
                 let hbase_config = solana_storage_hbase::LedgerStorageConfig {
@@ -218,6 +220,8 @@ impl JsonRpcService {
                     address: hbase_address.clone(),
                     block_cache,
                     use_md5_row_key_salt,
+                    enable_full_tx_cache,
+                    cache_address: cache_address.clone(),
                 };
                 runtime
                     .block_on(solana_storage_hbase::LedgerStorage::new_with_config(hbase_config))
@@ -254,9 +258,6 @@ impl JsonRpcService {
             .spawn(move || {
                 renice_this_thread(rpc_niceness_adj).unwrap();
 
-                // let mut io = MetaIoHandler::default();
-                // let mut io = MetaIoHandler::with_middleware(MetricsMiddleware);
-
                 let metrics_middleware = MetricsMiddleware::new();
 
                 // Create the MetaIoHandler and apply the middleware
@@ -267,19 +268,6 @@ impl JsonRpcService {
                     io.extend_with(storage_rpc_full::FullImpl.to_delegate());
                     io.extend_with(storage_rpc_deprecated_v1_7::DeprecatedV1_7Impl.to_delegate());
                 }
-
-                // io.extend_with(storage_rpc_minimal::MinimalImpl.to_delegate().map(|method| {
-                //     with_metrics("MinimalImpl", method)
-                // }));
-                //
-                // if full_api {
-                //     io.extend_with(storage_rpc_full::FullImpl.to_delegate().map(|method| {
-                //         with_metrics("FullImpl", method)
-                //     }));
-                //     io.extend_with(storage_rpc_deprecated_v1_7::DeprecatedV1_7Impl.to_delegate().map(|method| {
-                //         with_metrics("DeprecatedV1_7Impl", method)
-                //     }));
-                // }
 
                 let request_middleware = RpcRequestMiddleware::new(
                     log_path,

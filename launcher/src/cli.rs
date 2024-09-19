@@ -295,6 +295,19 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .takes_value(false)
                 .help("Enable md5 row key salt for block HBase keys."),
         )
+        .arg(
+            Arg::with_name("enable_full_tx_cache")
+                .long("enable-full-tx-cache")
+                .takes_value(false)
+                .help("Enable block transaction cache."),
+        )
+        .arg(
+            Arg::with_name("cache_address")
+                .long("cache-address")
+                .value_name("ADDRESS")
+                .takes_value(true)
+                .help("Block transaction cache server address"),
+        )
     ;
 }
 

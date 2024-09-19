@@ -1335,6 +1335,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "enum_dispatch"
+version = "0.3.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa18ce2bc66555b3218614519ac839ddb759a7d6720732f979ef8d13be147ecd"
+dependencies = [
+ "once_cell",
+ "proc-macro2 1.0.79",
+ "quote 1.0.35",
+ "syn 2.0.53",
+]
+
+[[package]]
 name = "env_logger"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2324,6 +2336,20 @@ name = "md5"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
+
+[[package]]
+name = "memcache"
+version = "0.17.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0396084c5d5e2ef2c480a51933b56e9673898f14657212eebbffcbcc12c7153a"
+dependencies = [
+ "byteorder",
+ "enum_dispatch",
+ "openssl",
+ "r2d2",
+ "rand 0.8.5",
+ "url 2.5.0",
+]
 
 [[package]]
 name = "memchr"
@@ -4789,6 +4815,7 @@ dependencies = [
  "hyper",
  "hyper-proxy",
  "log",
+ "memcache",
  "moka",
  "openssl",
  "prost",

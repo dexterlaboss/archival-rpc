@@ -51,6 +51,9 @@ pub enum Error {
 
     #[error("tokio error")]
     TokioJoinError(JoinError),
+
+    #[error("Cache Error: {0}")]
+    CacheError(String),
 }
 
 impl std::convert::From<std::io::Error> for Error {

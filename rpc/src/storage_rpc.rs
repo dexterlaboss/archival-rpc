@@ -113,6 +113,8 @@ pub struct RpcHBaseConfig {
     pub timeout: Option<Duration>,
     pub block_cache: Option<NonZeroUsize>,
     pub use_md5_row_key_salt: bool,
+    pub enable_full_tx_cache: bool,
+    pub cache_address: Option<String>,
 }
 
 impl Default for RpcHBaseConfig {
@@ -124,6 +126,8 @@ impl Default for RpcHBaseConfig {
             timeout: None,
             block_cache: None,
             use_md5_row_key_salt: false,
+            enable_full_tx_cache: false,
+            cache_address: None,
         }
     }
 }

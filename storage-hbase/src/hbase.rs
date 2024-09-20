@@ -332,11 +332,7 @@ impl HBase {
             row_key.as_bytes().to_vec(),
             vec![b"x".to_vec()],
             BTreeMap::new()
-        ).unwrap_or_else(|err| {
-            println!("get_row_with_columns error: {}", err);
-            std::process::exit(1);
-        });
-        // )?;
+        )?;
 
         let first_row_result = &row_result.into_iter()
             .next()

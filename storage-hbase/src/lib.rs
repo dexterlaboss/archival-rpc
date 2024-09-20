@@ -234,24 +234,22 @@ impl LedgerStorageAdapter for LedgerStorage {
 
     /// Fetch the confirmed block from the desired slot
     async fn get_confirmed_block(&self, slot: Slot, use_cache: bool) -> Result<ConfirmedBlock> {
-        info!("get_confirmed_block request received");
-
         debug!(
             "LedgerStorage::get_confirmed_block request received: {:?}",
             slot
         );
         inc_new_counter_debug!("storage-hbase-query", 1);
-        let start = Instant::now();
 
+        let start = Instant::now();
         let mut hbase = self.connection.client();
         let duration: Duration = start.elapsed();
-        info!("HBase connection took {:?}", duration);
+        debug!("HBase connection took {:?}", duration);
 
         if use_cache {
             if let Some(cache) = &self.cache {
                 if let Some(serialized_block) = cache.get(&slot) {
                     // print_cache_info(&locked_cache);
-                    info!("Using result from cache for {}", slot);
+                    debug!("Using result from cache for {}", slot);
                     let block_cell_data =
                         deserialize_protobuf_or_bincode_cell_data::<StoredConfirmedBlock, generated::ConfirmedBlock>(
                             &serialized_block,
@@ -266,7 +264,7 @@ impl LedgerStorageAdapter for LedgerStorage {
                     let block: ConfirmedBlock = match block_cell_data {
                         hbase::CellData::Bincode(block) => block.into(),
                         hbase::CellData::Protobuf(block) => block.try_into().map_err(|_err| {
-                            info!("Protobuf object is corrupted");
+                            error!("Protobuf object is corrupted");
                             hbase::Error::ObjectCorrupt(format!("blocks/{}", slot_to_blocks_key(slot, self.use_md5_row_key_salt)))
                         })?,
                     };
@@ -301,14 +299,14 @@ impl LedgerStorageAdapter for LedgerStorage {
         let block: ConfirmedBlock = match block_cell_data {
             hbase::CellData::Bincode(block) => block.into(),
             hbase::CellData::Protobuf(block) => block.try_into().map_err(|_err| {
-                info!("Protobuf object is corrupted");
+                error!("Protobuf object is corrupted");
                 hbase::Error::ObjectCorrupt(format!("blocks/{}", slot_to_blocks_key(slot, self.use_md5_row_key_salt)))
             })?,
         };
 
         if use_cache {
             if let Some(cache) = &self.cache {
-                info!("Storing block {} in cache", slot);
+                debug!("Storing block {} in cache", slot);
                 cache.insert(slot, block_cell_data_serialized.clone());
             }
         }
@@ -370,12 +368,11 @@ impl LedgerStorageAdapter for LedgerStorage {
                 hbase::Error::RowNotFound => Error::SignatureNotFound,
                 _ => err.into(),
             })?;
-        info!("Got full tx cell data");
 
         Ok(match tx_cell_data {
             hbase::CellData::Bincode(tx) => Some(tx.into()),
             hbase::CellData::Protobuf(tx) => Some(tx.try_into().map_err(|_err| {
-                info!("Protobuf object is corrupted");
+                error!("Protobuf object is corrupted");
                 hbase::Error::ObjectCorrupt(format!("tx_full/{}", signature.to_string()))
             })?),
         })
@@ -391,30 +388,23 @@ impl LedgerStorageAdapter for LedgerStorage {
         signature
     );
         if let Some(cache_client) = &self.cache_client {
-            let key = signature.to_string();
-            let key_clone = key.clone();
-            let cache_client_clone = cache_client.clone();
-
-            let result = tokio::task::spawn_blocking(move || {
-                cache_client_clone.get::<Vec<u8>>(&key_clone).map_err(CacheErrorWrapper)
-            })
-                .await
-                .map_err(Error::TokioJoinError)??;
-
-            if let Some(cached_bytes) = result {
-                let data = decompress(&cached_bytes).map_err(|e| {
-                    warn!("Failed to decompress transaction from cache for {}", key);
-                    Error::CacheError(format!("Decompression error: {}", e))
-                })?;
-
-                let tx = bincode::deserialize::<StoredConfirmedTransactionWithStatusMeta>(&data)
-                    .map_err(|e| {
-                        warn!("Failed to deserialize transaction from cache for {}", key);
-                        Error::CacheError(format!("Deserialization error: {}", e))
-                    })?;
-
-                info!("Transaction {} found in cache", key);
-                return Ok(Some(tx.into()));
+            match get_cached_transaction::<generated::ConfirmedTransactionWithStatusMeta>(cache_client, signature).await {
+                Ok(Some(tx)) => {
+                    if let Ok(confirmed_tx) = tx.try_into() {
+                        return Ok(Some(confirmed_tx));
+                    } else {
+                        warn!(
+                            "Cached protobuf object is corrupted for transaction {}",
+                            signature.to_string()
+                        );
+                    }
+                }
+                Ok(None) => {
+                    debug!("Transaction {} not found in cache", signature);
+                }
+                Err(e) => {
+                    warn!("Failed to read transaction from cache for {}: {:?}",signature, e);
+                }
             }
         }
 
@@ -770,6 +760,57 @@ impl LedgerStorageAdapter for LedgerStorage {
     }
 }
 
+async fn get_cached_transaction<P>(
+    cache_client: &MemcacheClient,
+    signature: &Signature,
+) -> Result<Option<P>>
+    where
+        P: prost::Message + Default
+{
+    let key = signature.to_string();
+    let key_clone = key.clone();
+    let cache_client_clone = cache_client.clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        cache_client_clone.get::<Vec<u8>>(&key_clone).map_err(CacheErrorWrapper)
+    })
+        .await
+        .map_err(Error::TokioJoinError)??;
+
+    if let Some(cached_bytes) = result {
+        // Decompress the cached data
+        let data = decompress(&cached_bytes).map_err(|e| {
+            warn!("Failed to decompress transaction from cache for {}", key);
+            Error::CacheError(format!("Decompression error: {}", e))
+        })?;
+
+        // Deserialize the data using protobuf instead of bincode
+        let tx = P::decode(&data[..]).map_err(|e| {
+            warn!("Failed to deserialize transaction from cache for {}", key);
+            Error::CacheError(format!("Protobuf deserialization error: {}", e))
+        })?;
+
+        info!("Transaction {} found in cache", key);
+        return Ok(Some(tx));
+    }
+
+    Ok(None)
+}
+
+// pub async fn get_cached_transaction<P>(
+//     cache_client: &Client,
+//     signature: &str,
+// ) -> Result<P>
+//     where
+//         P: prost::Message + Default,
+// {
+//     let data = decompress(value)?;
+//     P::decode(&data[..]).map_err(|err| {
+//         warn!("Failed to deserialize {}/{}: {}", table, key, err);
+//         Error::ObjectCorrupt(format!("{table}/{key}"))
+//     })
+// }
+
 // fn print_cache_info(cache: &MutexGuard<LruCache<Slot, ConfirmedBlock>>) {
 //     if cache.len() > 0 {
 //         println!("Cache Size: {}", cache.len());
@@ -779,12 +820,3 @@ impl LedgerStorageAdapter for LedgerStorage {
 //     }
 // }
 
-// fn print_cache_info(cache: &MutexGuard<LruCache<Slot, ConfirmedBlock>>) {
-//     // let locked_cache = cache.lock().await;  // Handle error more appropriately in production
-//     if cache.len() > 0 {
-//         println!("Cache Size: {}", cache.len());
-//         println!("Cache Keys: {:?}", cache.iter().map(|(k, _v)| *k).collect::<Vec<_>>());
-//     } else {
-//         println!("Cache is empty");
-//     }
-// }

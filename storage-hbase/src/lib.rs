@@ -462,50 +462,69 @@ impl LedgerStorageAdapter for LedgerStorage {
             u32,
         )>,
     > {
-        println!("Called get_confirmed_signatures_for_address [before_signature: {:?}, until_signature: {:?}]", before_signature.clone(), until_signature.clone());
-        debug!(
-            "LedgerStorage::get_confirmed_signatures_for_address request received: {:?}",
+        info!(
+            "LedgerStorage::get_confirmed_signatures_for_address: {:?}",
             address
         );
+        info!("Using signature range [before: {:?}, until: {:?}]", before_signature.clone(), until_signature.clone());
+
         inc_new_counter_debug!("storage-hbase-query", 1);
         let mut hbase = self.connection.client();
         let address_prefix = format!("{address}/");
 
-        println!("Getting the first signature");
-
         // Figure out where to start listing from based on `before_signature`
-        let (first_slot, before_transaction_index) = match before_signature {
-            None => (Slot::MAX, 0),
+        let (first_slot, before_transaction_index, before_fallback) = match before_signature {
+            None => (Slot::MAX, 0, false),
             Some(before_signature) => {
-                let TransactionInfo { slot, index, .. } = hbase
-                    .get_bincode_cell("tx", before_signature.to_string())
-                    .await?;
-
-                (slot, index)
+                // Try fetching from `tx` first
+                match hbase.get_bincode_cell("tx", before_signature.to_string()).await {
+                    Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
+                    // Fallback to `tx_full` if `tx` is not found
+                    Err(hbase::Error::RowNotFound) => {
+                        match self.get_full_transaction(before_signature).await? {
+                            Some(full_transaction) => (full_transaction.slot, 0, true),
+                            None => return Ok(vec![]),
+                        }
+                    },
+                    Err(err) => return Err(err.into()),
+                }
             }
         };
 
-        println!("Got first slot: {:?}", first_slot.clone());
-
-        println!("Getting the last signature");
+        info!("Got starting slot: {:?}, index: {:?}, using tx_full fallback: {:?}",
+            first_slot.clone(),
+            before_transaction_index.clone(),
+            before_fallback
+        );
 
         // Figure out where to end listing from based on `until_signature`
-        let (last_slot, until_transaction_index) = match until_signature {
-            None => (0, u32::MAX),
+        let (last_slot, until_transaction_index, until_fallback) = match until_signature {
+            None => (0, u32::MAX, false),
             Some(until_signature) => {
-                let TransactionInfo { slot, index, .. } = hbase
-                    .get_bincode_cell("tx", until_signature.to_string())
-                    .await?;
-
-                (slot, index)
+                // Try fetching from `tx` first
+                match hbase.get_bincode_cell("tx", until_signature.to_string()).await {
+                    Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
+                    // Fallback to `tx_full` if `tx` is not found
+                    Err(hbase::Error::RowNotFound) => {
+                        match self.get_full_transaction(until_signature).await? {
+                            Some(full_transaction) => (full_transaction.slot, 0, true),
+                            None => return Ok(vec![]),
+                        }
+                    },
+                    Err(err) => return Err(err.into()),
+                }
             }
         };
 
-        println!("Got last slot: {:?}", last_slot.clone());
+        info!("Got ending slot: {:?}, index: {:?}, using tx_full fallback: {:?}",
+            last_slot.clone(),
+            until_transaction_index.clone(),
+            until_fallback
+        );
 
         let mut infos = vec![];
 
-        println!("Getting the starting slot len from tx-by-addr");
+        debug!("Getting the starting slot length from tx-by-addr");
 
         let starting_slot_tx_len = hbase
             .get_protobuf_or_bincode_cell::<Vec<LegacyTransactionByAddrInfo>, tx_by_addr::TransactionByAddr>(
@@ -521,7 +540,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             })
             .unwrap_or(0);
 
-        println!("Getting the tx-by-addr data");
+        info!("Got starting slot tx len: {:?}", starting_slot_tx_len);
 
         // Return the next tx-by-addr data of amount `limit` plus extra to account for the largest
         // number that might be flitered out
@@ -542,7 +561,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             )
             .await?;
 
-        debug!("Starting the for loop");
+        info!("Loaded {:?} tx-by-addr entries", tx_by_addr_data.len());
 
         'outer: for (row_key, data) in tx_by_addr_data {
             let slot = !key_to_slot(&row_key[address_prefix.len()..]).ok_or_else(|| {
@@ -551,7 +570,7 @@ impl LedgerStorageAdapter for LedgerStorage {
                 ))
             })?;
 
-            debug!("Deserializing tx-by-addr data in the loop");
+            debug!("Deserializing tx-by-addr result data");
 
             let deserialized_cell_data = hbase::deserialize_protobuf_or_bincode_cell_data::<
                 Vec<LegacyTransactionByAddrInfo>,
@@ -575,17 +594,19 @@ impl LedgerStorageAdapter for LedgerStorage {
 
             cell_data.reverse();
 
-            debug!("Starting the loop over the cell data");
+            debug!("Filtering the result data");
 
             for tx_by_addr_info in cell_data.into_iter() {
                 // Filter out records before `before_transaction_index`
-                if slot == first_slot && tx_by_addr_info.index >= before_transaction_index {
+                if !before_fallback && slot == first_slot && tx_by_addr_info.index >= before_transaction_index {
                     continue;
                 }
-                // Filter out records after `until_transaction_index`
-                if slot == last_slot && tx_by_addr_info.index <= until_transaction_index {
+
+                // Filter out records after `until_transaction_index` unless fallback was used
+                if !until_fallback && slot == last_slot && tx_by_addr_info.index <= until_transaction_index {
                     continue;
                 }
+
                 infos.push((
                     ConfirmedTransactionStatusWithSignature {
                         signature: tx_by_addr_info.signature,
@@ -597,15 +618,15 @@ impl LedgerStorageAdapter for LedgerStorage {
                     tx_by_addr_info.index,
                 ));
                 // Respect limit
-                println!("Checking the limit: {:?}/{:?}", infos.len(), limit);
+                debug!("Checking the limit: {:?}/{:?}", infos.len(), limit);
                 if infos.len() >= limit {
-                    println!("Limit was reached, exiting loop");
+                    debug!("Limit was reached, exiting loop");
                     break 'outer;
                 }
             }
         }
 
-        println!("get signatures for address results: {:?}", infos);
+        info!("Returning {:?} result entries", infos.len());
 
         Ok(infos)
     }

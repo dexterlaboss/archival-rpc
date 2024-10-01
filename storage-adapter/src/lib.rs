@@ -336,7 +336,7 @@ pub struct TransactionInfo {
     pub slot: Slot, // The slot that contains the block with this transaction in it
     pub index: u32, // Where the transaction is located in the block
     pub err: Option<TransactionError>, // None if the transaction executed successfully
-    pub memo: Option<String>, // Transaction memo
+    // pub memo: Option<String>, // Transaction memo
 }
 
 // Part of a serialized `TransactionInfo` which is stored in the `tx` table

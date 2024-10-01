@@ -690,7 +690,7 @@ impl LedgerStorageAdapter for LedgerStorage {
                     slot,
                     index,
                     err,
-                    memo,
+                    // memo,
                 },
             ));
         }

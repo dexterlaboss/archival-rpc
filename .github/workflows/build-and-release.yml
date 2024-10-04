@@ -79,8 +79,8 @@ jobs:
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.gh-release.outputs.upload_url }}
-          asset_path: ./target/release/solana_lite_rpc # Adjust the path to match your binary name
-          asset_name: solana_lite_rpc_${{ github.ref_name }}_linux_amd64
+          asset_path: ./target/release/archival-rpc
+          asset_name: archival_rpc_${{ github.ref_name }}_linux_amd64
           asset_content_type: application/octet-stream
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

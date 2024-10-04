@@ -95,6 +95,7 @@ pub struct JsonRpcConfig {
     pub obsolete_v1_7_api: bool,
     pub max_request_body_size: Option<usize>,
     // pub block_cache: Option<NonZeroUsize>,
+    pub max_get_blocks_range: Option<u64>,
 }
 
 impl JsonRpcConfig {
@@ -269,15 +270,22 @@ impl JsonRpcRequestProcessor {
         end_slot: Option<Slot>,
         commitment: Option<CommitmentConfig>,
     ) -> Result<Vec<Slot>> {
+        debug!(
+            "getBlocks request received [start_slot: {:?}, end_slot: {:?}]",
+            start_slot, end_slot
+        );
+
         let commitment = commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
+
+        let max_get_blocks_range = self.config.max_get_blocks_range.unwrap_or(MAX_GET_CONFIRMED_BLOCKS_RANGE);
 
         if end_slot.unwrap() < start_slot {
             return Ok(vec![]);
         }
-        if end_slot.unwrap() - start_slot > MAX_GET_CONFIRMED_BLOCKS_RANGE {
+        if end_slot.unwrap() - start_slot > max_get_blocks_range {
             return Err(Error::invalid_params(format!(
-                "Slot range too large; max {MAX_GET_CONFIRMED_BLOCKS_RANGE}"
+                "Slot range too large; max {max_get_blocks_range}"
             )));
         }
 
@@ -306,12 +314,19 @@ impl JsonRpcRequestProcessor {
         limit: usize,
         commitment: Option<CommitmentConfig>,
     ) -> Result<Vec<Slot>> {
+        info!(
+            "getBlocksWithLimit request received [start_slot: {:?}, limit: {:?}]",
+            start_slot, limit
+        );
+
         let commitment = commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
 
-        if limit > MAX_GET_CONFIRMED_BLOCKS_RANGE as usize {
+        let max_get_blocks_range = self.config.max_get_blocks_range.unwrap_or(MAX_GET_CONFIRMED_BLOCKS_RANGE);
+
+        if limit > max_get_blocks_range as usize {
             return Err(Error::invalid_params(format!(
-                "Limit too large; max {MAX_GET_CONFIRMED_BLOCKS_RANGE}"
+                "Limit too large; max {max_get_blocks_range}"
             )));
         }
 
@@ -324,6 +339,7 @@ impl JsonRpcRequestProcessor {
 
         Ok(vec![])
     }
+
 
     pub async fn get_block_time(&self, slot: Slot) -> Result<Option<UnixTimestamp>> {
         if slot == 0 {

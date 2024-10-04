@@ -274,6 +274,15 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .help("The maximum request body size accepted by rpc service"),
         )
         .arg(
+            Arg::with_name("max_get_blocks_range")
+                .long("max-get-blocks-range")
+                .value_name("LIMIT")
+                .takes_value(true)
+                .validator(is_parsable::<u64>)
+                .hidden(true)
+                .help("The maximum get_blocks range limit"),
+        )
+        .arg(
             Arg::with_name("block_cache")
                 .long("block-cache")
                 .value_name("SIZE")
@@ -321,6 +330,7 @@ pub struct DefaultStorageRpcArgs {
     pub rpc_bigtable_instance_name: String,
     pub rpc_bigtable_app_profile_id: String,
     pub block_cache: Option<NonZeroUsize>,
+    pub max_get_blocks_range: Option<u64>,
 }
 
 impl DefaultStorageRpcArgs {
@@ -336,6 +346,7 @@ impl DefaultStorageRpcArgs {
             rpc_bigtable_app_profile_id: solana_storage_bigtable::DEFAULT_APP_PROFILE_ID
                 .to_string(),
             block_cache: None,
+            max_get_blocks_range: None,
         }
     }
 }

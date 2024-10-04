@@ -58,7 +58,6 @@ Stay tuned for more detailed guides on each step of the process.
 | `getSignaturesForAddress`       |
 | `getTransaction`       |
 | `getBlock`       |
-| `getBlockHeight`       |
 | `getBlockTime`       |
 | `getBlocks`       |
 | `getBlocksWithLimit`       |

@@ -3160,7 +3160,7 @@ dependencies = [
 
 [[package]]
 name = "proto"
-version = "1.16.15"
+version = "1.4.0"
 dependencies = [
  "protobuf-src",
  "tonic-build",
@@ -4181,7 +4181,7 @@ dependencies = [
 
 [[package]]
 name = "solana-launcher"
-version = "1.16.15"
+version = "1.4.0"
 dependencies = [
  "clap 2.34.0",
  "console",
@@ -4468,7 +4468,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc"
-version = "1.16.15"
+version = "1.4.0"
 dependencies = [
  "crossbeam-channel",
  "futures 0.3.30",
@@ -4560,7 +4560,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc-core"
-version = "1.16.15"
+version = "1.4.0"
 dependencies = [
  "crossbeam-channel",
  "log",
@@ -4750,7 +4750,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-adapter"
-version = "1.16.15"
+version = "1.4.0"
 dependencies = [
  "async-trait",
  "log",
@@ -4765,7 +4765,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-bigtable"
-version = "1.16.15"
+version = "1.4.0"
 dependencies = [
  "async-trait",
  "backoff",
@@ -4799,7 +4799,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-hbase"
-version = "1.16.15"
+version = "1.4.0"
 dependencies = [
  "async-trait",
  "backoff",
@@ -4837,7 +4837,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-proto"
-version = "1.16.15"
+version = "1.4.0"
 dependencies = [
  "bincode",
  "bs58",

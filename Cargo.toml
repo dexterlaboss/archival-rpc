@@ -86,20 +86,21 @@ solana-metrics = "=1.16.15"
 solana-net-utils = "=1.16.15"
 solana-perf = "=1.16.15"
 solana-rayon-threadlimit = "=1.16.15"
-solana-rpc = { path = "rpc", version = "=1.16.15" }
-solana-rpc-core = { path = "rpc-core", version = "=1.16.15" }
 solana-rpc-client-api = "=1.16.15"
 solana-sdk = "=1.16.15"
 solana-send-transaction-service = "=1.16.15"
-solana-storage-adapter = { path = "storage-adapter", version = "=1.16.15" }
-solana-storage-bigtable = { path = "storage-bigtable", version = "=1.16.15" }
-#solana-transaction-data = { path = "transaction-data", version = "=1.16.15" }
-solana-storage-hbase = { path = "storage-hbase", version = "=1.16.15" }
+solana-rpc = { path = "rpc", version = "=1.4.0" }
+solana-rpc-core = { path = "rpc-core", version = "=1.4.0" }
+solana-storage-adapter = { path = "storage-adapter", version = "=1.4.0" }
+solana-storage-bigtable = { path = "storage-bigtable", version = "=1.4.0" }
+solana-storage-hbase = { path = "storage-hbase", version = "=1.4.0" }
+solana-storage-proto = { path = "storage-proto", version = "=1.4.0" }
 #solana-storage-proto = "=1.16.15"
-solana-storage-proto = { path = "storage-proto", version = "=1.16.15" }
+#solana-transaction-data = { path = "transaction-data", version = "=1.16.15" }
+#solana-transaction-status = { path = "transaction-status", version = "=1.16.15" }
 #solana-transaction-data = "1.16.15"
 solana-transaction-status = "=1.16.15"
-#solana-transaction-status = { path = "transaction-status", version = "=1.16.15" }
+
 solana-version = "=1.16.15"
 spl-memo = "=3.0.1"
 symlink = "0.1.0"

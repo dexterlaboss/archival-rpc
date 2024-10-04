@@ -1,4 +1,4 @@
-name: Build and Release Solana Lite RPC
+name: Build and Release Solana Archival RPC
 
 on:
   push:
@@ -11,22 +11,76 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      # Cache the Cargo registry (dependencies)
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      # Cache the Cargo index
+      - name: Cache cargo index
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-index-
+
+      # Cache the target directory (build artifacts)
+      - name: Cache build
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-
+
+      # Install Rust
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      # Build the binary using Cargo
+      - name: Build the binary
+        run: cargo build --release
+
+      # Log in to DockerHub
       - name: Login to DockerHub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
+      # Build and push Docker image
       - name: Build and push Docker image
         run: |
           docker build -t dexterlaboss/archival-rpc:${GITHUB_REF_NAME} .
           docker push dexterlaboss/archival-rpc:${GITHUB_REF_NAME}
 
+      # Create GitHub Release
       - name: Create GitHub Release
+        id: gh-release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref }}
           name: Release ${{ github.ref }}
           body: 'Release of version ${{ github.ref }}'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Upload the compiled binary to the release
+      - name: Upload compiled binary to GitHub Release
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.gh-release.outputs.upload_url }}
+          asset_path: ./target/release/solana_lite_rpc # Adjust the path to match your binary name
+          asset_name: solana_lite_rpc_${{ github.ref_name }}_linux_amd64
+          asset_content_type: application/octet-stream
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -38,11 +38,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-build-
 
-      # Install Rust
+      # Install Rust version 1.70.0
       - name: Set up Rust
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: stable
+          toolchain: 1.70.0
           profile: minimal
           override: true
 

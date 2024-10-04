@@ -22,8 +22,8 @@ RUN mkdir -p /solana
 
 WORKDIR /solana
 
-COPY --from=build /solana/target/release/solana-lite-rpc .
+COPY --from=build /solana/target/release/archival-rpc .
 
 EXPOSE 8899
 
-CMD ["./solana-lite-rpc", "--bind-address=0.0.0.0", "--enable-rpc-hbase-ledger-storage", "--rpc-hbase-address=hbase:9090"]
+CMD ["./archival-rpc", "--bind-address=0.0.0.0", "--enable-rpc-hbase-ledger-storage", "--rpc-hbase-address=hbase:9090"]

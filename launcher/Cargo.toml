@@ -2,7 +2,7 @@
 name = "solana-launcher"
 description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/solana-validator"
-default-run = "solana-lite-rpc"
+default-run = "archival-rpc"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }

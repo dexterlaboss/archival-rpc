@@ -137,6 +137,15 @@ fn main() {
                 "rpc_max_request_body_size",
                 usize
             )),
+        max_get_blocks_range: if matches.is_present("max_get_blocks_range") {
+            Some(value_t_or_exit!(
+                matches,
+                "max_get_blocks_range",
+                u64
+            ))
+        } else {
+            None
+        },
         ..JsonRpcConfig::default_for_storage_rpc()
     });
 

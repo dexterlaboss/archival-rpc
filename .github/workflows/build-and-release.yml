@@ -19,8 +19,8 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          docker build -t dexterlaboss/solana-lite-rpc:${GITHUB_REF_NAME} .
-          docker push dexterlaboss/solana-lite-rpc:${GITHUB_REF_NAME}
+          docker build -t dexterlaboss/archival-rpc:${GITHUB_REF_NAME} .
+          docker push dexterlaboss/archival-rpc:${GITHUB_REF_NAME}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1

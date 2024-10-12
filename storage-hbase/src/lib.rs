@@ -462,11 +462,11 @@ impl LedgerStorageAdapter for LedgerStorage {
             u32,
         )>,
     > {
-        info!(
-            "LedgerStorage::get_confirmed_signatures_for_address: {:?}",
-            address
-        );
-        info!("Using signature range [before: {:?}, until: {:?}]", before_signature.clone(), until_signature.clone());
+        // info!(
+        //     "LedgerStorage::get_confirmed_signatures_for_address: {:?}",
+        //     address
+        // );
+        // info!("Using signature range [before: {:?}, until: {:?}]", before_signature.clone(), until_signature.clone());
 
         inc_new_counter_debug!("storage-hbase-query", 1);
         let mut hbase = self.connection.client();
@@ -491,7 +491,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             }
         };
 
-        info!("Got starting slot: {:?}, index: {:?}, using tx_full fallback: {:?}",
+        debug!("Got starting slot: {:?}, index: {:?}, using tx_full fallback: {:?}",
             first_slot.clone(),
             before_transaction_index.clone(),
             before_fallback
@@ -516,7 +516,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             }
         };
 
-        info!("Got ending slot: {:?}, index: {:?}, using tx_full fallback: {:?}",
+        debug!("Got ending slot: {:?}, index: {:?}, using tx_full fallback: {:?}",
             last_slot.clone(),
             until_transaction_index.clone(),
             until_fallback
@@ -540,7 +540,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             })
             .unwrap_or(0);
 
-        info!("Got starting slot tx len: {:?}", starting_slot_tx_len);
+        debug!("Got starting slot tx len: {:?}", starting_slot_tx_len);
 
         // Return the next tx-by-addr data of amount `limit` plus extra to account for the largest
         // number that might be flitered out
@@ -561,7 +561,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             )
             .await?;
 
-        info!("Loaded {:?} tx-by-addr entries", tx_by_addr_data.len());
+        debug!("Loaded {:?} tx-by-addr entries", tx_by_addr_data.len());
 
         'outer: for (row_key, data) in tx_by_addr_data {
             let slot = !key_to_slot(&row_key[address_prefix.len()..]).ok_or_else(|| {
@@ -626,7 +626,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             }
         }
 
-        info!("Returning {:?} result entries", infos.len());
+        debug!("Returning {:?} result entries", infos.len());
 
         Ok(infos)
     }
@@ -811,7 +811,7 @@ async fn get_cached_transaction<P>(
             Error::CacheError(format!("Protobuf deserialization error: {}", e))
         })?;
 
-        info!("Transaction {} found in cache", key);
+        debug!("Transaction {} found in cache", key);
         return Ok(Some(tx));
     }
 

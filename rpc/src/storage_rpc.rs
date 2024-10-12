@@ -180,14 +180,14 @@ impl JsonRpcRequestProcessor {
         &self,
         result: &std::result::Result<T, solana_storage_adapter::Error>,
     ) -> Result<()> {
-        info!("Checking hbase block");
+        debug!("Checking hbase block");
         if let Err(e) = result {
-            info!("Block error: {}", e);
+            debug!("Block error: {}", e);
         }
         if let Err(solana_storage_adapter::Error::BlockNotFound(slot)) = result {
             return Err(RpcCustomError::LongTermStorageSlotSkipped { slot: *slot }.into());
         }
-        info!("Block check successful");
+        debug!("Block check successful");
         Ok(())
     }
 
@@ -210,24 +210,24 @@ impl JsonRpcRequestProcessor {
             check_is_at_least_confirmed(commitment)?;
 
             let encode_block = |confirmed_block: ConfirmedBlock| -> Result<UiConfirmedBlock> {
-                info!("Encoding block");
+                debug!("Encoding block");
                 let mut encoded_block = confirmed_block
                     .encode_with_options(encoding, encoding_options)
                     .map_err(|e| {
-                        info!("Encoding error: {:?}", e);
+                        debug!("Encoding error: {:?}", e);
                         RpcCustomError::from(e)
                     })?;
                 if slot == 0 {
                     encoded_block.block_time = Some(self.genesis_creation_time());
                     encoded_block.block_height = Some(0);
                 }
-                info!("Encoded block");
+                debug!("Encoded block");
 
                 Ok(encoded_block)
             };
             if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
                 let hbase_result = hbase_ledger_storage.get_confirmed_block(slot, false).await;
-                info!("Got confirmed block");
+                debug!("Got confirmed block");
 
                 self.check_hbase_result(&hbase_result)?;
 
@@ -251,7 +251,7 @@ impl JsonRpcRequestProcessor {
             let start = Instant::now();
             let hbase_result = hbase_ledger_storage.get_confirmed_block(slot, false).await;
             let duration: Duration = start.elapsed();
-            println!("HBase request took {:?}", duration);
+            debug!("HBase request took {:?}", duration);
 
             return match hbase_result {
                 Ok(_) => Ok(RpcBlockCheck { exists: true }),
@@ -270,10 +270,10 @@ impl JsonRpcRequestProcessor {
         end_slot: Option<Slot>,
         commitment: Option<CommitmentConfig>,
     ) -> Result<Vec<Slot>> {
-        debug!(
-            "getBlocks request received [start_slot: {:?}, end_slot: {:?}]",
-            start_slot, end_slot
-        );
+        // info!(
+        //     "getBlocks request received [start_slot: {:?}, end_slot: {:?}]",
+        //     start_slot, end_slot
+        // );
 
         let commitment = commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
@@ -314,10 +314,10 @@ impl JsonRpcRequestProcessor {
         limit: usize,
         commitment: Option<CommitmentConfig>,
     ) -> Result<Vec<Slot>> {
-        info!(
-            "getBlocksWithLimit request received [start_slot: {:?}, limit: {:?}]",
-            start_slot, limit
-        );
+        // info!(
+        //     "getBlocksWithLimit request received [start_slot: {:?}, limit: {:?}]",
+        //     start_slot, limit
+        // );
 
         let commitment = commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
@@ -435,6 +435,11 @@ impl JsonRpcRequestProcessor {
         let commitment = config.commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
 
+        info!(
+           "getSignaturesForAddress request received [address: {:?}, before: {:?}, until: {:?}], limit: {:?}",
+           address, before, until, limit
+        );
+
         if self.config.enable_rpc_transaction_history {
             let map_results = |results: Vec<ConfirmedTransactionStatusWithSignature>| {
                 results
@@ -537,7 +542,7 @@ pub mod storage_rpc_minimal {
         }
 
         fn get_version(&self, _: Self::Metadata) -> Result<RpcVersionInfo> {
-            debug!("get_version rpc request received");
+            info!("getVersion request received");
             let version = solana_version::Version::default();
             Ok(RpcVersionInfo {
                 solana_core: version.to_string(),
@@ -546,9 +551,7 @@ pub mod storage_rpc_minimal {
         }
 
         fn get_slot(&self, meta: Self::Metadata, config: Option<RpcContextConfig>) -> BoxFuture<Result<Slot>> {
-            debug!("get_slot rpc request received");
-            // meta.get_slot(config.unwrap_or_default()).await
-
+            info!("getSlot request received");
             Box::pin(async move { Ok(meta.get_slot(config.unwrap_or_default()).await) })
         }
     }
@@ -643,8 +646,8 @@ pub mod storage_rpc_full {
             signature_strs: Vec<String>,
             config: Option<RpcSignatureStatusConfig>,
         ) -> BoxFuture<Result<RpcResponse<Vec<Option<TransactionStatus>>>>> {
-            debug!(
-                "get_signature_statuses rpc request received: {:?}",
+            info!(
+                "getSignatureStatuses request received: {:?}",
                 signature_strs.len()
             );
             if signature_strs.len() > MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS {
@@ -670,7 +673,7 @@ pub mod storage_rpc_full {
             slot: Slot,
             config: Option<RpcEncodingConfigWrapper<RpcBlockConfig>>,
         ) -> BoxFuture<Result<Option<UiConfirmedBlock>>> {
-            debug!("get_block rpc request received: {:?}", slot);
+            info!("getBlock request received: {:?}", slot);
             Box::pin(async move { meta.get_block(slot, config).await })
         }
 
@@ -679,7 +682,7 @@ pub mod storage_rpc_full {
             meta: Self::Metadata,
             slot: Slot,
         ) -> BoxFuture<Result<RpcBlockCheck>> {
-            debug!("check_block rpc request received: {:?}", slot);
+            info!("checkBlock request received: {:?}", slot);
             Box::pin(async move { meta.check_block(slot).await })
         }
 
@@ -692,8 +695,8 @@ pub mod storage_rpc_full {
         ) -> BoxFuture<Result<Vec<Slot>>> {
             let (end_slot, maybe_commitment) =
                 config.map(|config| config.unzip()).unwrap_or_default();
-            debug!(
-                "get_blocks rpc request received: {}-{:?}",
+            info!(
+                "getBlocks request received [start_slot: {:?}, end_slot: {:?}]",
                 start_slot, end_slot
             );
             Box::pin(async move {
@@ -709,10 +712,11 @@ pub mod storage_rpc_full {
             limit: usize,
             commitment: Option<CommitmentConfig>,
         ) -> BoxFuture<Result<Vec<Slot>>> {
-            debug!(
-                "get_blocks_with_limit rpc request received: {}-{}",
-                start_slot, limit,
+            info!(
+                "getBlocksWithLimit request received [start_slot: {:?}, limit: {:?}]",
+                start_slot, limit
             );
+
             Box::pin(async move {
                 meta.get_blocks_with_limit(start_slot, limit, commitment)
                     .await
@@ -724,6 +728,7 @@ pub mod storage_rpc_full {
             meta: Self::Metadata,
             slot: Slot,
         ) -> BoxFuture<Result<Option<UnixTimestamp>>> {
+            info!("getBlockTime request received [slot: {:?}]", slot);
             Box::pin(async move { meta.get_block_time(slot).await })
         }
 
@@ -733,7 +738,7 @@ pub mod storage_rpc_full {
             signature_str: String,
             config: Option<RpcEncodingConfigWrapper<RpcTransactionConfig>>,
         ) -> BoxFuture<Result<Option<EncodedConfirmedTransactionWithStatusMeta>>> {
-            debug!("get_transaction rpc request received: {:?}", signature_str);
+            info!("getTransaction request received: {:?}", signature_str);
             let signature = verify_signature(&signature_str);
             if let Err(err) = signature {
                 return Box::pin(future::err(err));
@@ -776,7 +781,7 @@ pub mod storage_rpc_full {
         }
 
         fn get_first_available_block(&self, meta: Self::Metadata) -> BoxFuture<Result<Slot>> {
-            debug!("get_first_available_block rpc request received");
+            info!("getFirstAvailableBlock request received");
             Box::pin(async move { Ok(meta.get_first_available_block().await) })
         }
     }
@@ -848,7 +853,7 @@ pub mod storage_rpc_deprecated_v1_7 {
             slot: Slot,
             config: Option<RpcEncodingConfigWrapper<RpcConfirmedBlockConfig>>,
         ) -> BoxFuture<Result<Option<UiConfirmedBlock>>> {
-            debug!("get_confirmed_block rpc request received: {:?}", slot);
+            info!("getConfirmedBlock rpc request received: {:?}", slot);
             Box::pin(async move {
                 meta.get_block(slot, config.map(|config| config.convert()))
                     .await
@@ -864,8 +869,8 @@ pub mod storage_rpc_deprecated_v1_7 {
         ) -> BoxFuture<Result<Vec<Slot>>> {
             let (end_slot, maybe_commitment) =
                 config.map(|config| config.unzip()).unwrap_or_default();
-            debug!(
-                "get_confirmed_blocks rpc request received: {}-{:?}",
+            info!(
+                "getConfirmedBlocks rpc request received: {}-{:?}",
                 start_slot, end_slot
             );
             Box::pin(async move {
@@ -881,8 +886,8 @@ pub mod storage_rpc_deprecated_v1_7 {
             limit: usize,
             commitment: Option<CommitmentConfig>,
         ) -> BoxFuture<Result<Vec<Slot>>> {
-            debug!(
-                "get_confirmed_blocks_with_limit rpc request received: {}-{}",
+            info!(
+                "getConfirmedBlocksWithLimit rpc request received: {}-{}",
                 start_slot, limit,
             );
             Box::pin(async move {
@@ -897,8 +902,8 @@ pub mod storage_rpc_deprecated_v1_7 {
             signature_str: String,
             config: Option<RpcEncodingConfigWrapper<RpcConfirmedTransactionConfig>>,
         ) -> BoxFuture<Result<Option<EncodedConfirmedTransactionWithStatusMeta>>> {
-            debug!(
-                "get_confirmed_transaction rpc request received: {:?}",
+            info!(
+                "getConfirmedTransaction rpc request received: {:?}",
                 signature_str
             );
             let signature = verify_signature(&signature_str);

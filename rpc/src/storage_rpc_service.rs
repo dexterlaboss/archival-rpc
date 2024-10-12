@@ -17,6 +17,9 @@ use {
         Output,
         Response,
         Metadata,
+        Error,
+        Failure,
+        Id,
     },
     jsonrpc_http_server::{
         hyper, AccessControlAllowOrigin, CloseHandle, DomainsValidation, RequestMiddleware,
@@ -39,23 +42,30 @@ use {
         HistogramTimer,
         HistogramVec,
         IntCounterVec,
+        IntGauge,
         TextEncoder,
         Encoder,
         register_histogram_vec,
-        register_int_counter_vec
+        register_int_counter_vec,
+        register_int_gauge,
     },
 };
 use std::future::Future;
 use futures::future::{Either, FutureExt, BoxFuture};
+use std::panic::UnwindSafe;
+use std::panic::AssertUnwindSafe;
 use jsonrpc_http_server::{
     hyper::{Body as HyperBody, Request as HyperRequest, Response as HyperResponse, StatusCode},
     // middleware::{RequestMiddleware, RequestMiddlewareAction},
 };
 use serde_json::Value;
 
+#[derive(Clone)]
 struct MetricsMiddleware {
     request_counter: Arc<IntCounterVec>,
     request_duration_histogram: Arc<HistogramVec>,
+    idle_threads_counter: Arc<IntGauge>,
+    active_threads_counter: Arc<IntGauge>,
 }
 
 impl MetricsMiddleware {
@@ -71,6 +81,14 @@ impl MetricsMiddleware {
                 "Duration of RPC requests in seconds",
                 &["method"]
             ).unwrap()),
+            idle_threads_counter: Arc::new(register_int_gauge!(
+                "rpc_idle_threads_total",
+                "Total number of idle threads in the RPC service"
+            ).unwrap()),
+            active_threads_counter: Arc::new(register_int_gauge!(
+                "rpc_active_threads_total",
+                "Total number of active threads in the RPC service"
+            ).unwrap()),
         }
     }
 
@@ -81,6 +99,11 @@ impl MetricsMiddleware {
         // Start a timer to record the duration
         self.request_duration_histogram.with_label_values(&[method]).start_timer()
     }
+
+    fn update_thread_metrics(&self, idle_threads: usize, active_threads: usize) {
+        self.idle_threads_counter.set(idle_threads as i64);
+        self.active_threads_counter.set(active_threads as i64);
+    }
 }
 
 impl<M: Metadata> Middleware<M> for MetricsMiddleware {
@@ -90,17 +113,63 @@ impl<M: Metadata> Middleware<M> for MetricsMiddleware {
     fn on_call<F, X>(&self, call: Call, meta: M, next: F) -> Either<Self::CallFuture, X>
         where
             F: FnOnce(Call, M) -> X + Send + Sync,
-            X: Future<Output = Option<Output>> + Send + 'static,
+            X: Future<Output = Option<Output>> + Send + 'static, // Added UnwindSafe bound
     {
         if let Call::MethodCall(ref request) = call {
             let method = request.method.clone();
 
+            let active_threads_counter = Arc::clone(&self.active_threads_counter);
+            let idle_threads_counter = Arc::clone(&self.idle_threads_counter);
+
+            let request_id = request.id.clone();
+            let request_jsonrpc = request.jsonrpc.clone();
+
+            // Mark thread as active
+            active_threads_counter.inc();
+            idle_threads_counter.dec();
+
             let timer = self.record_metrics(&method);
 
-            let future = next(call, meta).map(move |output| {
-                timer.observe_duration();
-                output
-            });
+            let future = AssertUnwindSafe(next(call, meta))
+                .catch_unwind()
+                .then(move |result| {
+                    timer.observe_duration();
+
+                    // Mark thread as inactive
+                    active_threads_counter.dec();
+                    idle_threads_counter.inc();
+
+                    match result {
+                        Err(_) => {
+                            let error = Error::new(jsonrpc_core::ErrorCode::InternalError);
+                            debug!("Request panicked with error: {:?}", error);
+
+                            let failure_output = Output::Failure(Failure {
+                                jsonrpc: request_jsonrpc,
+                                error,
+                                id: request_id,
+                            });
+
+                            futures::future::ready(Some(failure_output))
+                        }
+
+                        Ok(Some(output)) => {
+                            futures::future::ready(Some(output))
+                        }
+                        Ok(None) => {
+                            let error = Error::new(jsonrpc_core::ErrorCode::InternalError);
+                            debug!("Request failed with error: {:?}", error);
+
+                            let failure_output = Output::Failure(Failure {
+                                jsonrpc: request_jsonrpc,
+                                error,
+                                id: request_id,
+                            });
+
+                            futures::future::ready(Some(failure_output))
+                        }
+                    }
+                });
 
             Either::Left(Box::pin(future))
         } else {
@@ -198,10 +267,17 @@ impl JsonRpcService {
         let rpc_threads = 1.max(config.rpc_threads);
         let rpc_niceness_adj = config.rpc_niceness_adj;
 
+        // let metrics_middleware = MetricsMiddleware::new();
+        // metrics_middleware.idle_threads_counter.set(rpc_threads as i64);
+
         let runtime = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(rpc_threads)
-                .on_thread_start(move || renice_this_thread(rpc_niceness_adj).unwrap())
+                .on_thread_start(
+                    move || {
+                        renice_this_thread(rpc_niceness_adj).unwrap();
+                    }
+                )
                 .thread_name("solRpcEl")
                 .enable_all()
                 .build()
@@ -260,51 +336,55 @@ impl JsonRpcService {
         let (close_handle_sender, close_handle_receiver) = unbounded();
         let thread_hdl = Builder::new()
             .name("solJsonRpcSvc".to_string())
-            .spawn(move || {
-                renice_this_thread(rpc_niceness_adj).unwrap();
+            .spawn({
+                // let metrics_middleware = Arc::clone(&metrics_middleware);
+                move || {
+                    renice_this_thread(rpc_niceness_adj).unwrap();
 
-                let metrics_middleware = MetricsMiddleware::new();
+                    let metrics_middleware = MetricsMiddleware::new();
+                    metrics_middleware.idle_threads_counter.set(rpc_threads as i64);
 
-                // Create the MetaIoHandler and apply the middleware
-                let mut io = MetaIoHandler::with_middleware(metrics_middleware);
+                    // Create the MetaIoHandler and apply the middleware
+                    let mut io = MetaIoHandler::with_middleware(metrics_middleware);
 
-                io.extend_with(storage_rpc_minimal::MinimalImpl.to_delegate());
-                if full_api {
-                    io.extend_with(storage_rpc_full::FullImpl.to_delegate());
-                    io.extend_with(storage_rpc_deprecated_v1_7::DeprecatedV1_7Impl.to_delegate());
-                }
+                    io.extend_with(storage_rpc_minimal::MinimalImpl.to_delegate());
+                    if full_api {
+                        io.extend_with(storage_rpc_full::FullImpl.to_delegate());
+                        io.extend_with(storage_rpc_deprecated_v1_7::DeprecatedV1_7Impl.to_delegate());
+                    }
 
-                let request_middleware = RpcRequestMiddleware::new(
-                    log_path,
-                );
-                let server = ServerBuilder::with_meta_extractor(
-                    io,
-                    move |_req: &hyper::Request<hyper::Body>| request_processor.clone(),
-                )
-                    .event_loop_executor(runtime.handle().clone())
-                    .threads(1)
-                    .cors(DomainsValidation::AllowOnly(vec![
-                        AccessControlAllowOrigin::Any,
-                    ]))
-                    .cors_max_age(86400)
-                    .request_middleware(request_middleware)
-                    .max_request_body_size(max_request_body_size)
-                    .start_http(&rpc_addr);
+                    let request_middleware = RpcRequestMiddleware::new(
+                        log_path,
+                    );
+                    let server = ServerBuilder::with_meta_extractor(
+                        io,
+                        move |_req: &hyper::Request<hyper::Body>| request_processor.clone(),
+                    )
+                        .event_loop_executor(runtime.handle().clone())
+                        .threads(1)
+                        .cors(DomainsValidation::AllowOnly(vec![
+                            AccessControlAllowOrigin::Any,
+                        ]))
+                        .cors_max_age(86400)
+                        .request_middleware(request_middleware)
+                        .max_request_body_size(max_request_body_size)
+                        .start_http(&rpc_addr);
 
-                if let Err(e) = server {
-                    warn!(
+                    if let Err(e) = server {
+                        warn!(
                         "JSON RPC service unavailable error: {:?}. \n\
                            Also, check that port {} is not already in use by another application",
                         e,
                         rpc_addr.port()
                     );
-                    close_handle_sender.send(Err(e.to_string())).unwrap();
-                    return;
-                }
+                        close_handle_sender.send(Err(e.to_string())).unwrap();
+                        return;
+                    }
 
-                let server = server.unwrap();
-                close_handle_sender.send(Ok(server.close_handle())).unwrap();
-                server.wait();
+                    let server = server.unwrap();
+                    close_handle_sender.send(Ok(server.close_handle())).unwrap();
+                    server.wait();
+                }
             })
             .unwrap();
 

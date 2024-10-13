@@ -30,7 +30,6 @@ use {
     thiserror::Error,
     tokio::task::JoinError,
 };
-use md5::{compute};
 
 #[derive(Debug, Error)]
 pub enum Error {

@@ -9,6 +9,7 @@ jobs:
   build_and_push:
     runs-on: ubuntu-latest
     steps:
+      # Checkout the code
       - uses: actions/checkout@v3
 
       # Cache the Cargo registry (dependencies)
@@ -20,7 +21,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-registry-
 
-      # Cache the Cargo index
+      # Cache the Cargo index (Git dependencies)
       - name: Cache cargo index
         uses: actions/cache@v3
         with:
@@ -30,15 +31,15 @@ jobs:
             ${{ runner.os }}-cargo-index-
 
       # Cache the target directory (build artifacts)
-      - name: Cache build
+      - name: Cache build artifacts
         uses: actions/cache@v3
         with:
           path: target
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-build-
 
-      # Install Rust version 1.70.0
+      # Set up Rust (use version 1.70.0)
       - name: Set up Rust
         uses: actions-rs/toolchain@v1
         with:
@@ -46,8 +47,8 @@ jobs:
           profile: minimal
           override: true
 
-      # Build the binary using Cargo
-      - name: Build the binary
+      # Build the project with Cargo
+      - name: Build with cargo
         run: cargo build --release
 
       # Log in to DockerHub
@@ -57,11 +58,15 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # Build and push Docker image
+      # Build and push the Docker image with layer caching
       - name: Build and push Docker image
         run: |
-          docker build -t dexterlaboss/archival-rpc:${GITHUB_REF_NAME} .
-          docker push dexterlaboss/archival-rpc:${GITHUB_REF_NAME}
+          docker buildx create --use
+          docker buildx build \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --tag dexterlaboss/archival-rpc:${GITHUB_REF_NAME} \
+            --push .
 
       # Create GitHub Release
       - name: Create GitHub Release

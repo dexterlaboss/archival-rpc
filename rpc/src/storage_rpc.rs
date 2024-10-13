@@ -505,7 +505,7 @@ impl JsonRpcRequestProcessor {
         Slot::default()
     }
 
-    pub async fn get_slot(&self, config: RpcContextConfig) -> Slot {
+    pub async fn get_slot(&self, _config: RpcContextConfig) -> Slot {
         if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
             if let Ok(hbase_slot) = hbase_ledger_storage.get_latest_stored_slot().await {
                 return hbase_slot;

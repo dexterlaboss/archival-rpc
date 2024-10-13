@@ -450,7 +450,7 @@ impl LedgerStorageAdapter for LedgerStorage {
     }
 
     /// Fetch the confirmed block from the desired slot
-    async fn get_confirmed_block(&self, slot: Slot, use_cache: bool) -> Result<ConfirmedBlock> {
+    async fn get_confirmed_block(&self, slot: Slot, _use_cache: bool) -> Result<ConfirmedBlock> {
         trace!(
             "LedgerStorage::get_confirmed_block request received: {:?}",
             slot

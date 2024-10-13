@@ -48,7 +48,6 @@ use {
         num::NonZeroUsize,
     },
     memcache::Client as MemcacheClient,
-    bincode,
     tokio::task,
 };
 
@@ -134,7 +133,7 @@ impl LedgerStorage {
             block_cache,
             use_md5_row_key_salt,
             enable_full_tx_cache,
-            mut cache_address
+            cache_address
         } = config;
         let connection = hbase::HBaseConnection::new(
             address.as_str(),
@@ -818,26 +817,4 @@ async fn get_cached_transaction<P>(
     Ok(None)
 }
 
-// pub async fn get_cached_transaction<P>(
-//     cache_client: &Client,
-//     signature: &str,
-// ) -> Result<P>
-//     where
-//         P: prost::Message + Default,
-// {
-//     let data = decompress(value)?;
-//     P::decode(&data[..]).map_err(|err| {
-//         warn!("Failed to deserialize {}/{}: {}", table, key, err);
-//         Error::ObjectCorrupt(format!("{table}/{key}"))
-//     })
-// }
-
-// fn print_cache_info(cache: &MutexGuard<LruCache<Slot, ConfirmedBlock>>) {
-//     if cache.len() > 0 {
-//         println!("Cache Size: {}", cache.len());
-//         println!("Cache Keys: {:?}", cache.iter().map(|(k, _v)| *k).collect::<Vec<_>>());
-//     } else {
-//         println!("Cache is empty");
-//     }
-// }
 

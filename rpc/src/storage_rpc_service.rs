@@ -19,7 +19,6 @@ use {
         Metadata,
         Error,
         Failure,
-        Id,
     },
     jsonrpc_http_server::{
         hyper, AccessControlAllowOrigin, CloseHandle, DomainsValidation, RequestMiddleware,
@@ -52,13 +51,7 @@ use {
 };
 use std::future::Future;
 use futures::future::{Either, FutureExt, BoxFuture};
-use std::panic::UnwindSafe;
 use std::panic::AssertUnwindSafe;
-use jsonrpc_http_server::{
-    hyper::{Body as HyperBody, Request as HyperRequest, Response as HyperResponse, StatusCode},
-    // middleware::{RequestMiddleware, RequestMiddlewareAction},
-};
-use serde_json::Value;
 
 #[derive(Clone)]
 struct MetricsMiddleware {
@@ -100,9 +93,16 @@ impl MetricsMiddleware {
         self.request_duration_histogram.with_label_values(&[method]).start_timer()
     }
 
-    fn update_thread_metrics(&self, idle_threads: usize, active_threads: usize) {
-        self.idle_threads_counter.set(idle_threads as i64);
-        self.active_threads_counter.set(active_threads as i64);
+    fn thread_started(&self) {
+        // Increment the active threads counter and decrement the idle threads counter
+        self.active_threads_counter.inc();
+        self.idle_threads_counter.dec();
+    }
+
+    fn thread_stopped(&self) {
+        // Decrement the active threads counter and increment the idle threads counter
+        self.active_threads_counter.dec();
+        self.idle_threads_counter.inc();
     }
 }
 
@@ -113,31 +113,28 @@ impl<M: Metadata> Middleware<M> for MetricsMiddleware {
     fn on_call<F, X>(&self, call: Call, meta: M, next: F) -> Either<Self::CallFuture, X>
         where
             F: FnOnce(Call, M) -> X + Send + Sync,
-            X: Future<Output = Option<Output>> + Send + 'static, // Added UnwindSafe bound
+            X: Future<Output = Option<Output>> + Send + 'static,
     {
         if let Call::MethodCall(ref request) = call {
             let method = request.method.clone();
 
-            let active_threads_counter = Arc::clone(&self.active_threads_counter);
-            let idle_threads_counter = Arc::clone(&self.idle_threads_counter);
+            let metrics = self.clone();
+
+            let timer = metrics.record_metrics(&method);
 
             let request_id = request.id.clone();
             let request_jsonrpc = request.jsonrpc.clone();
 
-            // Mark thread as active
-            active_threads_counter.inc();
-            idle_threads_counter.dec();
-
-            let timer = self.record_metrics(&method);
+            // Mark thread as started
+            metrics.thread_started();
 
             let future = AssertUnwindSafe(next(call, meta))
                 .catch_unwind()
                 .then(move |result| {
                     timer.observe_duration();
 
-                    // Mark thread as inactive
-                    active_threads_counter.dec();
-                    idle_threads_counter.inc();
+                    // Mark thread as stopped
+                    metrics.thread_stopped();
 
                     match result {
                         Err(_) => {
@@ -267,9 +264,6 @@ impl JsonRpcService {
         let rpc_threads = 1.max(config.rpc_threads);
         let rpc_niceness_adj = config.rpc_niceness_adj;
 
-        // let metrics_middleware = MetricsMiddleware::new();
-        // metrics_middleware.idle_threads_counter.set(rpc_threads as i64);
-
         let runtime = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(rpc_threads)
@@ -337,7 +331,6 @@ impl JsonRpcService {
         let thread_hdl = Builder::new()
             .name("solJsonRpcSvc".to_string())
             .spawn({
-                // let metrics_middleware = Arc::clone(&metrics_middleware);
                 move || {
                     renice_this_thread(rpc_niceness_adj).unwrap();
 

@@ -10,7 +10,6 @@ use {
         },
     },
     thiserror::Error,
-    solana_storage_proto::convert::{generated},
     hbase_thrift::hbase::{BatchMutation, HbaseSyncClient, THbaseSyncClient, TScan},
     hbase_thrift::{
         MutationBuilder

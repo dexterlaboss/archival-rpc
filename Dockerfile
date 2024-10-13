@@ -1,4 +1,3 @@
-# First stage: Build the project
 FROM rust:1.70.0 as build
 
 # Install dependencies
@@ -9,36 +8,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libclang-dev \
     libudev-dev
 
-# Create a new empty shell project
-RUN USER=root cargo new --bin solana
-WORKDIR /solana
-
-# Copy only the Cargo.toml and Cargo.lock to cache dependencies
+# Create a new empty workspace project to cache dependencies
+WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
+COPY rpc/Cargo.toml rpc-core/Cargo.toml storage-adapter/Cargo.toml storage-hbase/Cargo.toml \
+     storage-bigtable/Cargo.toml storage-bigtable/build-proto/Cargo.toml storage-proto/Cargo.toml launcher/Cargo.toml ./
 
-# Build the dependencies and cache them
+# Build dependencies only
 RUN cargo build --release
 RUN rm -rf src
 
-# Now copy the full source code
-COPY . /solana
+# Copy the full source code
+COPY . .
 
-# Build the final binary
+# Build the entire workspace
 RUN cargo build --release
 
-# Second stage: Create a minimal runtime image
+
 FROM debian:buster-slim
 
-# Create the directory for the binary
 RUN mkdir -p /solana
 
 WORKDIR /solana
 
 # Copy the compiled binary from the builder stage
-COPY --from=build /solana/target/release/archival-rpc .
+COPY --from=build /build/target/release/archival-rpc .
 
 # Expose the necessary port
 EXPOSE 8899
 
-# Define the default command
 CMD ["./archival-rpc", "--bind-address=0.0.0.0", "--enable-rpc-hbase-ledger-storage", "--rpc-hbase-address=hbase:9090"]

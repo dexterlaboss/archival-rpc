@@ -31,6 +31,11 @@ use {
     tokio::task::JoinError,
 };
 
+#[macro_use]
+extern crate serde_derive;
+
+pub mod compression;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Storage Error: {0}")]
@@ -147,7 +152,7 @@ impl From<StoredConfirmedTransactionWithStatusMeta> for ConfirmedTransactionWith
     }
 }
 
-#[cfg(test)]
+// #[cfg(test)]
 impl From<ConfirmedBlock> for StoredConfirmedBlock {
     fn from(confirmed_block: ConfirmedBlock) -> Self {
         let ConfirmedBlock {
@@ -437,4 +442,15 @@ pub trait LedgerStorageAdapter: Send + Sync {
     ) -> Result<()>;
 
     fn clone_box(&self) -> Box<dyn LedgerStorageAdapter>;
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_slot_to_key() {
+        assert_eq!(slot_to_key(0), "0000000000000000");
+        assert_eq!(slot_to_key(!0), "ffffffffffffffff");
+    }
 }

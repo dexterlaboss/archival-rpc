@@ -1,15 +1,16 @@
 
 use {
     crate::{
-        system_monitor_service::{
-            verify_net_stats_access, SystemMonitorService, SystemMonitorStatsReportConfig,
-        },
+        // system_monitor_service::{
+        //     verify_net_stats_access, SystemMonitorService, SystemMonitorStatsReportConfig,
+        // },
         rpc_network_node::*,
     },
     solana_rpc::{
         storage_rpc::JsonRpcConfig,
         storage_rpc_service::JsonRpcService,
     },
+    metrics::Metrics,
     solana_sdk::{
         exit::Exit,
     },
@@ -30,12 +31,8 @@ use {
 
 pub struct RpcServiceConfig {
     pub rpc_config: JsonRpcConfig,
-    pub rpc_addrs: Option<(SocketAddr, SocketAddr)>,
+    pub rpc_addr: Option<SocketAddr>,
     pub enforce_ulimit_nofile: bool,
-    pub no_os_memory_stats_reporting: bool,
-    pub no_os_network_stats_reporting: bool,
-    pub no_os_cpu_stats_reporting: bool,
-    pub no_os_disk_stats_reporting: bool,
     pub rpc_service_exit: Arc<RwLock<Exit>>,
 }
 
@@ -43,13 +40,8 @@ impl Default for RpcServiceConfig {
     fn default() -> Self {
         Self {
             rpc_config: JsonRpcConfig::default(),
-            rpc_addrs: None,
+            rpc_addr: None,
             enforce_ulimit_nofile: true,
-
-            no_os_memory_stats_reporting: true,
-            no_os_network_stats_reporting: true,
-            no_os_cpu_stats_reporting: true,
-            no_os_disk_stats_reporting: true,
 
             rpc_service_exit: Arc::new(RwLock::new(Exit::default())),
         }
@@ -70,7 +62,6 @@ impl RpcServiceConfig {
 pub struct RpcService {
     rpc_service_exit: Arc<RwLock<Exit>>,
     json_rpc_service: Option<JsonRpcService>,
-    system_monitor_service: Option<SystemMonitorService>,
 }
 
 impl RpcService {
@@ -81,14 +72,6 @@ impl RpcService {
         config: &RpcServiceConfig,
         // should_check_duplicate_instance: bool,
     ) -> Result<Self, String> {
-        if !config.no_os_network_stats_reporting {
-            if let Err(e) = verify_net_stats_access() {
-                return Err(format!(
-                    "Failed to access Network stats: {e}. Bypass check with --no-os-network-stats-reporting.",
-                ));
-            }
-        }
-
         if rayon::ThreadPoolBuilder::new()
             .thread_name(|ix| format!("solRayonGlob{ix:02}"))
             .build_global()
@@ -113,23 +96,17 @@ impl RpcService {
                 .register_exit(Box::new(move || exit.store(true, Ordering::Relaxed)));
         }
 
-        let system_monitor_service = Some(SystemMonitorService::new(
-            Arc::clone(&exit),
-            SystemMonitorStatsReportConfig {
-                report_os_memory_stats: !config.no_os_memory_stats_reporting,
-                report_os_network_stats: !config.no_os_network_stats_reporting,
-                report_os_cpu_stats: !config.no_os_cpu_stats_reporting,
-            },
-        ));
-
         Self::print_node_info(&node);
 
-        let json_rpc_service= if let Some((rpc_addr, _rpc_pubsub_addr)) = config.rpc_addrs {
+        let metrics = Arc::new(Metrics::new());
+
+        let json_rpc_service= if let Some(rpc_addr) = config.rpc_addr {
             let json_rpc_service = JsonRpcService::new(
                 rpc_addr,
                 config.rpc_config.clone(),
                 log_path,
                 config.rpc_service_exit.clone(),
+                metrics,
             )?;
 
             Some(json_rpc_service)
@@ -137,14 +114,13 @@ impl RpcService {
             None
         };
 
-        datapoint_info!(
-            "launcher-new",
-            ("version", solana_version::version!(), String)
-        );
+        // datapoint_info!(
+        //     "launcher-new",
+        //     ("version", solana_version::version!(), String)
+        // );
 
         Ok(Self {
             json_rpc_service,
-            system_monitor_service,
             rpc_service_exit: config.rpc_service_exit.clone(),
         })
     }
@@ -165,12 +141,6 @@ impl RpcService {
     pub fn join(self) {
         if let Some(json_rpc_service) = self.json_rpc_service {
             json_rpc_service.join().expect("rpc_service");
-        }
-
-        if let Some(system_monitor_service) = self.system_monitor_service {
-            system_monitor_service
-                .join()
-                .expect("system_monitor_service");
         }
     }
 }

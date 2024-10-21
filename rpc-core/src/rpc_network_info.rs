@@ -31,7 +31,7 @@ pub enum Error {
 
 /// Structure representing a node on the network
 #[derive(
-Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, AbiExample, Deserialize, Serialize,
+Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize,
 )]
 pub struct RpcNetworkInfo {
     /// address to which to send JSON-RPC requests

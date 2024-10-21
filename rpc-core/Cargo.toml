@@ -35,10 +35,8 @@ rayon = { workspace = true }
 #rolling-file = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
-solana-frozen-abi-macro = { workspace = true }
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
-solana-rayon-threadlimit = { workspace = true }
 solana-rpc = { workspace = true }
 solana-sdk = { workspace = true }
 solana-version = { workspace = true }

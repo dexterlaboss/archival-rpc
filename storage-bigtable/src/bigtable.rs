@@ -3,7 +3,6 @@
 use {
     crate::{
         access_token::{AccessToken, Scope},
-        compression::{compress_best, decompress},
         root_ca_certificate, CredentialType,
     },
     backoff::{future::retry, ExponentialBackoff},
@@ -14,6 +13,9 @@ use {
     },
     thiserror::Error,
     tonic::{codegen::InterceptedService, transport::ClientTlsConfig, Request, Status},
+    solana_storage_adapter::{
+        compression::{compress_best, decompress},
+    },
 };
 
 #[allow(clippy::derive_partial_eq_without_eq)]

@@ -80,12 +80,11 @@ md5 = "0.7"
 solana-account-decoder = "=1.16.15"
 solana-clap-utils = "=1.16.15"
 #solana-clap-v3-utils = "1.16.15"
-solana-frozen-abi-macro = "=1.16.15"
 solana-logger = "=1.16.15"
-solana-metrics = "=1.16.15"
-solana-net-utils = "=1.16.15"
-solana-perf = "=1.16.15"
-solana-rayon-threadlimit = "=1.16.15"
+solana-metrics = { path = "metrics" }
+solana-net-utils = { path = "net-utils" }
+solana-perf = { path = "perf" }
+#solana-rayon-threadlimit = "=1.16.15"
 solana-rpc-client-api = "=1.16.15"
 solana-sdk = "=1.16.15"
 solana-send-transaction-service = "=1.16.15"
@@ -118,6 +117,9 @@ tokio-util = "0.6"
 tonic = "0.8.3"
 tonic-build = "0.8.4"
 zstd = "0.11.2"
+url = "2.3.1"
+nix = "0.26.2"
+caps = "0.5.5"
 
 [patch.crates-io]
 # for details, see https://github.com/solana-labs/crossbeam/commit/fd279d707025f0e60951e429bf778b4813d1b6bf

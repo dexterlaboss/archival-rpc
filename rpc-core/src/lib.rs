@@ -8,12 +8,12 @@ use {
         rpc_network_node::*,
     },
     log::*,
-    solana_net_utils::PortRange,
     solana_rpc::{
         storage_rpc::JsonRpcConfig,
     },
     solana_sdk::{
         exit::Exit,
+        rpc_port,
     },
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -25,15 +25,11 @@ use {
 };
 
 pub mod stats_reporter_service;
-pub mod system_monitor_service;
 
 pub mod rpc_service;
 
 #[macro_use]
 extern crate log;
-
-#[macro_use]
-extern crate solana_metrics;
 
 pub mod rpc_network_node;
 
@@ -43,10 +39,6 @@ pub mod rpc_network_info;
 #[macro_use]
 extern crate serde_derive;
 
-#[macro_use]
-extern crate solana_frozen_abi_macro;
-
-
 #[cfg(test)]
 #[macro_use]
 extern crate matches;
@@ -54,20 +46,14 @@ extern crate matches;
 
 #[derive(Debug)]
 pub struct RpcNodeConfig {
-    port_range: PortRange,
     bind_ip_addr: IpAddr,
 }
 
 impl Default for RpcNodeConfig {
     fn default() -> Self {
-        const MIN_PORT_RANGE: u16 = 1024;
-        const MAX_PORT_RANGE: u16 = 65535;
-
         let bind_ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
-        let port_range = (MIN_PORT_RANGE, MAX_PORT_RANGE);
 
         Self {
-            port_range,
             bind_ip_addr,
         }
     }
@@ -76,7 +62,7 @@ impl Default for RpcNodeConfig {
 pub struct RpcNodeBuilder {
     log_path: Option<PathBuf>,
     rpc_config: JsonRpcConfig,
-    rpc_ports: Option<(u16, u16)>,
+    rpc_port: Option<u16>,
     node_config: RpcNodeConfig,
     pub rpc_service_exit: Arc<RwLock<Exit>>,
 }
@@ -86,7 +72,7 @@ impl Default for RpcNodeBuilder {
         Self {
             log_path: Option::<PathBuf>::default(),
             rpc_config: JsonRpcConfig::default_for_storage_rpc(),
-            rpc_ports: Option::<(u16, u16)>::default(),
+            rpc_port: Option::<u16>::default(),
             node_config: RpcNodeConfig::default(),
             rpc_service_exit: Arc::<RwLock<Exit>>::default(),
         }
@@ -110,7 +96,7 @@ impl RpcNodeBuilder {
     }
 
     pub fn rpc_port(&mut self, rpc_port: u16) -> &mut Self {
-        self.rpc_ports = Some((rpc_port, rpc_port + 1));
+        self.rpc_port = Some(rpc_port);
         self
     }
 
@@ -130,7 +116,6 @@ impl RpcNodeBuilder {
 
 
 pub struct RpcNode {
-    // log_path: PathBuf,
     rpc_url: String,
     rpc_service: Option<RpcService>,
 }
@@ -164,20 +149,17 @@ impl RpcNode {
         info!("Starting rpc server at {:?}", config.node_config.bind_ip_addr);
 
         let mut node = RpcNetworkNode::new_single_bind(
-            config.node_config.port_range,
+            rpc_port::DEFAULT_RPC_PORT,
             config.node_config.bind_ip_addr,
         );
-        if let Some((rpc, _rpc_pubsub)) = config.rpc_ports {
+        if let Some(rpc) = config.rpc_port {
             node.info.rpc = SocketAddr::new(config.node_config.bind_ip_addr, rpc);
         }
 
         let rpc_url = format!("http://{}", node.info.rpc);
 
         let rpc_service_config = RpcServiceConfig {
-            rpc_addrs: Some((
-                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), node.info.rpc.port()),
-                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), node.info.rpc.port()),
-            )),
+            rpc_addr: Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), node.info.rpc.port())),
             rpc_config: config.rpc_config.clone(),
             rpc_service_exit: config.rpc_service_exit.clone(),
             ..RpcServiceConfig::default_for_storage_rpc()
@@ -187,11 +169,9 @@ impl RpcNode {
             node,
             &log_path,
             &rpc_service_config,
-            // true, // should_check_duplicate_instance
         )?);
 
         let rpc_node = RpcNode {
-            // log_path,
             rpc_url,
             rpc_service,
         };

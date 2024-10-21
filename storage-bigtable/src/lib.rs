@@ -4,7 +4,7 @@ use {
     crate::bigtable::RowKey,
     async_trait::async_trait,
     log::*,
-    solana_metrics::datapoint_info,
+    // solana_metrics::datapoint_info,
     solana_sdk::{
         clock::{
             Slot,
@@ -43,15 +43,14 @@ use {
     },
 };
 
-#[macro_use]
-extern crate solana_metrics;
+// #[macro_use]
+// extern crate solana_metrics;
 
-#[macro_use]
-extern crate serde_derive;
+// #[macro_use]
+// extern crate serde_derive;
 
 mod access_token;
 mod bigtable;
-mod compression;
 mod root_ca_certificate;
 
 
@@ -107,14 +106,14 @@ impl LedgerStorageStats {
 
     fn maybe_report(&self) {
         if self.last_report.should_update(METRICS_REPORT_INTERVAL_MS) {
-            datapoint_debug!(
-                "storage-bigtable-query",
-                (
-                    "num_queries",
-                    self.num_queries.swap(0, Ordering::Relaxed) as i64,
-                    i64
-                )
-            );
+            // datapoint_debug!(
+            //     "storage-bigtable-query",
+            //     (
+            //         "num_queries",
+            //         self.num_queries.swap(0, Ordering::Relaxed) as i64,
+            //         i64
+            //     )
+            // );
         }
     }
 }
@@ -776,7 +775,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             }));
         }
 
-        let mut bytes_written = 0;
+        let mut _bytes_written = 0;
         let mut maybe_first_err: Option<Error> = None;
 
         let results = futures::future::join_all(tasks).await;
@@ -793,7 +792,7 @@ impl LedgerStorageAdapter for LedgerStorage {
                     }
                 }
                 Ok(Ok(bytes)) => {
-                    bytes_written += bytes;
+                    _bytes_written += bytes;
                 }
             }
         }
@@ -802,22 +801,22 @@ impl LedgerStorageAdapter for LedgerStorage {
             return Err(err);
         }
 
-        let num_transactions = confirmed_block.transactions.len();
+        let _num_transactions = confirmed_block.transactions.len();
 
         // Store the block itself last, after all other metadata about the block has been
         // successfully stored.  This avoids partial uploaded blocks from becoming visible to
         // `get_confirmed_block()` and `get_confirmed_blocks()`
         let blocks_cells = [(slot_to_blocks_key(slot, false), confirmed_block.into())];
-        bytes_written += self
+        _bytes_written += self
             .connection
             .put_protobuf_cells_with_retry::<generated::ConfirmedBlock>("blocks", &blocks_cells)
             .await?;
-        datapoint_info!(
-            "storage-bigtable-upload-block",
-            ("slot", slot, i64),
-            ("transactions", num_transactions, i64),
-            ("bytes", bytes_written, i64),
-        );
+        // datapoint_info!(
+        //     "storage-bigtable-upload-block",
+        //     ("slot", slot, i64),
+        //     ("transactions", num_transactions, i64),
+        //     ("bytes", bytes_written, i64),
+        // );
         Ok(())
     }
 
@@ -829,6 +828,7 @@ impl LedgerStorageAdapter for LedgerStorage {
 #[cfg(test)]
 mod test {
     use super::*;
+    use solana_storage_adapter::slot_to_key;
 
     #[test]
     fn test_slot_to_key() {

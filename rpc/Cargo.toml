@@ -41,6 +41,7 @@ solana-storage-hbase = { workspace = true }
 solana-storage-adapter = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
+solana-metrics = { workspace = true }
 #stream-cancel = { workspace = true }
 thiserror = { workspace = true }
 tokio = { version = "~1.14.1", features = ["full"] }

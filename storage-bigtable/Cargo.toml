@@ -28,7 +28,6 @@ prost-types = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 smpl_jwt = { workspace = true }
-solana-metrics = { workspace = true }
 solana-sdk = { workspace = true }
 solana-storage-adapter = { workspace = true }
 solana-storage-proto = { workspace = true }

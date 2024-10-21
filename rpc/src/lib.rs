@@ -1,8 +1,6 @@
 #![allow(clippy::integer_arithmetic)]
 pub mod custom_error;
 
-pub mod rpc;
-
 pub mod storage_rpc;
 pub mod storage_rpc_service;
 

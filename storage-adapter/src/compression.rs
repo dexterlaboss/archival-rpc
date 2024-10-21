@@ -86,3 +86,22 @@ pub fn compress_best(data: &[u8]) -> Result<Vec<u8>, io::Error> {
         .unwrap())
 }
 
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_compress_uncompress() {
+        let data = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+        assert_eq!(
+            decompress(&compress_best(&data).expect("compress_best")).expect("decompress"),
+            data
+        );
+    }
+
+    #[test]
+    fn test_compress() {
+        let data = vec![0; 256];
+        assert!(compress_best(&data).expect("compress_best").len() < data.len());
+    }
+}

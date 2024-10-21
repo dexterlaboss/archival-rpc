@@ -1,16 +1,17 @@
 #![allow(clippy::integer_arithmetic)]
 
+use std::sync::Arc;
 use {
     crate::{
         hbase::{
             RowData,
             deserialize_protobuf_or_bincode_cell_data,
         },
-        compression::{decompress},
     },
     async_trait::async_trait,
     log::*,
-    solana_metrics::{datapoint_info, inc_new_counter_debug},
+    metrics::Metrics,
+    // solana_metrics::{datapoint_info, inc_new_counter_debug},
     solana_sdk::{
         clock::{
             Slot,
@@ -18,6 +19,12 @@ use {
         pubkey::Pubkey,
         signature::Signature,
         sysvar::is_sysvar_id,
+        message::{
+            VersionedMessage,
+        },
+        transaction::{
+            Transaction
+        },
     },
     solana_storage_proto::convert::{generated, tx_by_addr},
     solana_transaction_status::{
@@ -26,6 +33,7 @@ use {
         TransactionByAddrInfo,
         TransactionStatus,
         VersionedConfirmedBlock, VersionedTransactionWithStatusMeta,
+        TransactionWithStatusMeta,
     },
     solana_storage_adapter::{
         Error, Result, LedgerStorageAdapter,
@@ -36,12 +44,14 @@ use {
         slot_to_blocks_key,
         slot_to_tx_by_addr_key,
         key_to_slot,
+        compression::{decompress},
     },
     moka::sync::Cache,
     std::{
         collections::{
             HashMap,
         },
+        str::FromStr,
         convert::{TryInto},
         time::{Duration, Instant},
         boxed::Box,
@@ -51,15 +61,13 @@ use {
     tokio::task,
 };
 
-#[macro_use]
-extern crate solana_metrics;
+// #[macro_use]
+// extern crate solana_metrics;
 
-#[macro_use]
-extern crate serde_derive;
+// #[macro_use]
+// extern crate serde_derive;
 
 mod hbase;
-mod compression;
-
 
 impl std::convert::From<hbase::Error> for Error {
     fn from(err: hbase::Error) -> Self {
@@ -87,6 +95,7 @@ pub struct LedgerStorageConfig {
     pub block_cache: Option<NonZeroUsize>,
     pub use_md5_row_key_salt: bool,
     pub enable_full_tx_cache: bool,
+    pub disable_tx_fallback: bool,
     pub cache_address: Option<String>,
 }
 
@@ -99,7 +108,8 @@ impl Default for LedgerStorageConfig {
             block_cache: None,
             use_md5_row_key_salt: false,
             enable_full_tx_cache: false,
-            cache_address: Some(DEFAULT_ADDRESS.to_string())
+            disable_tx_fallback: false,
+            cache_address: Some(DEFAULT_ADDRESS.to_string()),
         }
     }
 }
@@ -110,22 +120,25 @@ pub struct LedgerStorage {
     cache: Option<Cache<Slot, RowData>>,
     use_md5_row_key_salt: bool,
     cache_client: Option<MemcacheClient>,
+    disable_tx_fallback: bool,
+    metrics: Arc<Metrics>,
 }
 
 impl LedgerStorage {
     pub async fn new(
         read_only: bool,
         timeout: Option<std::time::Duration>,
+        metrics: Arc<Metrics>,
     ) -> Result<Self> {
         Self::new_with_config(LedgerStorageConfig {
             read_only,
             timeout,
             ..LedgerStorageConfig::default()
-        })
+        }, metrics.clone(),)
             .await
     }
 
-    pub async fn new_with_config(config: LedgerStorageConfig) -> Result<Self> {
+    pub async fn new_with_config(config: LedgerStorageConfig, metrics: Arc<Metrics>) -> Result<Self> {
         let LedgerStorageConfig {
             read_only,
             timeout,
@@ -133,7 +146,8 @@ impl LedgerStorage {
             block_cache,
             use_md5_row_key_salt,
             enable_full_tx_cache,
-            cache_address
+            disable_tx_fallback,
+            cache_address,
         } = config;
         let connection = hbase::HBaseConnection::new(
             address.as_str(),
@@ -180,6 +194,8 @@ impl LedgerStorage {
             cache,
             use_md5_row_key_salt,
             cache_client,
+            disable_tx_fallback,
+            metrics,
         })
     }
 }
@@ -194,7 +210,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             return Ok(Some(0));
         }
 
-        inc_new_counter_debug!("storage-hbase-query", 1);
+        // inc_new_counter_debug!("storage-hbase-query", 1);
         let mut hbase = self.connection.client();
         let blocks = hbase.get_row_keys("blocks", None, None, 1, false).await?;
         if blocks.is_empty() {
@@ -217,7 +233,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             return Ok(vec![]);
         }
 
-        inc_new_counter_debug!("storage-hbase-query", 1);
+        // inc_new_counter_debug!("storage-hbase-query", 1);
         let mut hbase = self.connection.client();
         let blocks = hbase
             .get_row_keys(
@@ -237,7 +253,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             "LedgerStorage::get_confirmed_block request received: {:?}",
             slot
         );
-        inc_new_counter_debug!("storage-hbase-query", 1);
+        // inc_new_counter_debug!("storage-hbase-query", 1);
 
         let start = Instant::now();
         let mut hbase = self.connection.client();
@@ -333,7 +349,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             "LedgerStorage::get_signature_status request received: {:?}",
             signature
         );
-        inc_new_counter_debug!("storage-hbase-query", 1);
+        // inc_new_counter_debug!("storage-hbase-query", 1);
         let mut hbase = self.connection.client();
         let transaction_info = hbase
             .get_bincode_cell::<TransactionInfo>("tx", signature.to_string())
@@ -353,7 +369,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             "LedgerStorage::get_full_transaction request received: {:?}",
             signature
         );
-        inc_new_counter_debug!("storage-hbase-query", 1);
+        // inc_new_counter_debug!("storage-hbase-query", 1);
 
         let mut hbase = self.connection.client();
 
@@ -386,17 +402,28 @@ impl LedgerStorageAdapter for LedgerStorage {
         "LedgerStorage::get_confirmed_transaction request received: {:?}",
         signature
     );
+        let mut source = "tx";
+        let tx_type;
+        let epoch: u64;
+
         if let Some(cache_client) = &self.cache_client {
             match get_cached_transaction::<generated::ConfirmedTransactionWithStatusMeta>(cache_client, signature).await {
                 Ok(Some(tx)) => {
-                    if let Ok(confirmed_tx) = tx.try_into() {
-                        return Ok(Some(confirmed_tx));
-                    } else {
-                        warn!(
-                            "Cached protobuf object is corrupted for transaction {}",
-                            signature.to_string()
-                        );
-                    }
+                    let confirmed_tx: ConfirmedTransactionWithStatusMeta = match tx.try_into() {
+                        Ok(val) => val,
+                        Err(_) => {
+                            warn!("Cached protobuf object is corrupted for transaction {}", signature.to_string());
+                            return Ok(None);
+                        }
+                    };
+
+                    epoch = calculate_epoch(confirmed_tx.slot);
+
+                    source = "cache";
+                    tx_type = determine_transaction_type(&confirmed_tx.tx_with_meta);
+                    self.metrics.record_transaction(source, epoch, tx_type);
+
+                    return Ok(Some(confirmed_tx));
                 }
                 Ok(None) => {
                     debug!("Transaction {} not found in cache", signature);
@@ -407,10 +434,20 @@ impl LedgerStorageAdapter for LedgerStorage {
             }
         }
 
-        inc_new_counter_debug!("storage-hbase-query", 1);
+        // inc_new_counter_debug!("storage-hbase-query", 1);
 
         if let Ok(Some(full_tx)) = self.get_full_transaction(signature).await {
+            epoch = calculate_epoch(full_tx.slot);
+
+            source = "tx_full";
+            tx_type = determine_transaction_type(&full_tx.tx_with_meta);
+            self.metrics.record_transaction(source, epoch, tx_type);
+
             return Ok(Some(full_tx));
+        }
+
+        if self.disable_tx_fallback {
+            return Ok(None);
         }
 
         let mut hbase = self.connection.client();
@@ -423,6 +460,8 @@ impl LedgerStorageAdapter for LedgerStorage {
                 hbase::Error::RowNotFound => Error::SignatureNotFound,
                 _ => Error::StorageBackendError(Box::new(err)),
             })?;
+
+        epoch = calculate_epoch(slot);
 
         // Load the block and return the transaction
         let block = self.get_confirmed_block(slot, true).await?;
@@ -439,6 +478,9 @@ impl LedgerStorageAdapter for LedgerStorage {
                 );
                     Ok(None)
                 } else {
+                    tx_type = determine_transaction_type(&tx_with_meta); // Determine the transaction type
+                    self.metrics.record_transaction(source, epoch, tx_type);
+
                     Ok(Some(ConfirmedTransactionWithStatusMeta {
                         slot,
                         tx_with_meta,
@@ -467,7 +509,7 @@ impl LedgerStorageAdapter for LedgerStorage {
         // );
         // info!("Using signature range [before: {:?}, until: {:?}]", before_signature.clone(), until_signature.clone());
 
-        inc_new_counter_debug!("storage-hbase-query", 1);
+        // inc_new_counter_debug!("storage-hbase-query", 1);
         let mut hbase = self.connection.client();
         let address_prefix = format!("{address}/");
 
@@ -730,7 +772,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             }));
         }
 
-        let mut bytes_written = 0;
+        let mut _bytes_written = 0;
         let mut maybe_first_err: Option<Error> = None;
 
         let results = futures::future::join_all(tasks).await;
@@ -747,7 +789,7 @@ impl LedgerStorageAdapter for LedgerStorage {
                     }
                 }
                 Ok(Ok(bytes)) => {
-                    bytes_written += bytes;
+                    _bytes_written += bytes;
                 }
             }
         }
@@ -756,22 +798,22 @@ impl LedgerStorageAdapter for LedgerStorage {
             return Err(err);
         }
 
-        let num_transactions = confirmed_block.transactions.len();
+        let _num_transactions = confirmed_block.transactions.len();
 
         // Store the block itself last, after all other metadata about the block has been
         // successfully stored.  This avoids partial uploaded blocks from becoming visible to
         // `get_confirmed_block()` and `get_confirmed_blocks()`
         let blocks_cells = [(slot_to_blocks_key(slot, self.use_md5_row_key_salt), confirmed_block.into())];
-        bytes_written += self
+        _bytes_written += self
             .connection
             .put_protobuf_cells_with_retry::<generated::ConfirmedBlock>("blocks", &blocks_cells)
             .await?;
-        datapoint_info!(
-            "storage-hbase-upload-block",
-            ("slot", slot, i64),
-            ("transactions", num_transactions, i64),
-            ("bytes", bytes_written, i64),
-        );
+        // datapoint_info!(
+        //     "storage-hbase-upload-block",
+        //     ("slot", slot, i64),
+        //     ("transactions", num_transactions, i64),
+        //     ("bytes", bytes_written, i64),
+        // );
         Ok(())
     }
 
@@ -817,4 +859,54 @@ async fn get_cached_transaction<P>(
     Ok(None)
 }
 
+fn is_voting_tx(transaction_with_status_meta: &TransactionWithStatusMeta) -> bool {
+    let account_address = Pubkey::from_str("Vote111111111111111111111111111111111111111").unwrap();
 
+    match transaction_with_status_meta {
+        TransactionWithStatusMeta::MissingMetadata(transaction) => {
+            has_account_in_transaction(transaction, &account_address)
+        }
+        TransactionWithStatusMeta::Complete(versioned_transaction_with_meta) => {
+            has_account(versioned_transaction_with_meta, &account_address)
+        }
+    }
+}
+
+fn has_account(
+    versioned_transaction_with_meta: &VersionedTransactionWithStatusMeta,
+    address: &Pubkey
+) -> bool {
+    match &versioned_transaction_with_meta.transaction.message {
+        VersionedMessage::Legacy(message) => message.account_keys.contains(address),
+        VersionedMessage::V0(message) => message.account_keys.contains(address),
+    }
+}
+
+fn has_account_in_transaction(transaction: &Transaction, address: &Pubkey) -> bool {
+    transaction.message.account_keys.contains(address)
+}
+
+fn is_error_tx(transaction_with_status_meta: &TransactionWithStatusMeta) -> bool {
+    match transaction_with_status_meta {
+        TransactionWithStatusMeta::MissingMetadata(_) => {
+            false
+        }
+        TransactionWithStatusMeta::Complete(versioned_transaction_with_meta) => {
+            versioned_transaction_with_meta.meta.status.is_err()
+        }
+    }
+}
+
+fn determine_transaction_type(transaction_with_status_meta: &TransactionWithStatusMeta) -> &'static str {
+    if is_voting_tx(transaction_with_status_meta) {
+        "voting"
+    } else if is_error_tx(transaction_with_status_meta) {
+        "error"
+    } else {
+        "regular"
+    }
+}
+
+fn calculate_epoch(slot: u64) -> u64 {
+    slot / 432_000
+}

@@ -100,6 +100,15 @@ fn main() {
     let rpc_hbase_config = Some(RpcHBaseConfig {
         enable_hbase_ledger_upload: false,
         hbase_address: value_t_or_exit!(matches, "rpc_hbase_address", String),
+        fallback_hbase_address: if matches.is_present("fallback_hbase_address") {
+            Some(value_t_or_exit!(
+                matches,
+                "fallback_hbase_address",
+                String
+            ))
+        } else {
+            None
+        },
         timeout: None,
         block_cache: if matches.is_present("block_cache") {
             Some(value_t_or_exit!(
@@ -112,6 +121,7 @@ fn main() {
         },
         use_md5_row_key_salt: matches.is_present("use_md5_row_key_salt"),
         enable_full_tx_cache: matches.is_present("enable_full_tx_cache"),
+        disable_tx_fallback: matches.is_present("disable_tx_fallback"),
         cache_address: if matches.is_present("cache_address") {
             Some(value_t_or_exit!(
                 matches,

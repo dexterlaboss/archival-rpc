@@ -9,6 +9,7 @@ use {
             *,
         },
     },
+    metrics::Metrics,
     crossbeam_channel::unbounded,
     jsonrpc_core::{
         MetaIoHandler,
@@ -29,6 +30,10 @@ use {
     solana_sdk::{
         exit::Exit,
     },
+    prometheus::{
+        TextEncoder,
+        Encoder,
+    },
     std::{
         net::SocketAddr,
         path::{Path, PathBuf},
@@ -37,17 +42,7 @@ use {
         },
         thread::{self, Builder, JoinHandle},
     },
-    prometheus::{
-        HistogramTimer,
-        HistogramVec,
-        IntCounterVec,
-        IntGauge,
-        TextEncoder,
-        Encoder,
-        register_histogram_vec,
-        register_int_counter_vec,
-        register_int_gauge,
-    },
+
 };
 use std::future::Future;
 use futures::future::{Either, FutureExt, BoxFuture};
@@ -55,54 +50,12 @@ use std::panic::AssertUnwindSafe;
 
 #[derive(Clone)]
 struct MetricsMiddleware {
-    request_counter: Arc<IntCounterVec>,
-    request_duration_histogram: Arc<HistogramVec>,
-    idle_threads_counter: Arc<IntGauge>,
-    active_threads_counter: Arc<IntGauge>,
+    metrics: Arc<Metrics>,
 }
 
 impl MetricsMiddleware {
-    pub fn new() -> Self {
-        Self {
-            request_counter: Arc::new(register_int_counter_vec!(
-                "requests_total",
-                "Total number of RPC requests",
-                &["method"]
-            ).unwrap()),
-            request_duration_histogram: Arc::new(register_histogram_vec!(
-                "request_duration_seconds",
-                "Duration of RPC requests in seconds",
-                &["method"]
-            ).unwrap()),
-            idle_threads_counter: Arc::new(register_int_gauge!(
-                "rpc_idle_threads_total",
-                "Total number of idle threads in the RPC service"
-            ).unwrap()),
-            active_threads_counter: Arc::new(register_int_gauge!(
-                "rpc_active_threads_total",
-                "Total number of active threads in the RPC service"
-            ).unwrap()),
-        }
-    }
-
-    fn record_metrics(&self, method: &str) -> HistogramTimer {
-        // Increment the request counter
-        self.request_counter.with_label_values(&[method]).inc();
-
-        // Start a timer to record the duration
-        self.request_duration_histogram.with_label_values(&[method]).start_timer()
-    }
-
-    fn thread_started(&self) {
-        // Increment the active threads counter and decrement the idle threads counter
-        self.active_threads_counter.inc();
-        self.idle_threads_counter.dec();
-    }
-
-    fn thread_stopped(&self) {
-        // Decrement the active threads counter and increment the idle threads counter
-        self.active_threads_counter.dec();
-        self.idle_threads_counter.inc();
+    pub fn new(metrics: Arc<Metrics>) -> Self {
+        Self { metrics }
     }
 }
 
@@ -117,16 +70,21 @@ impl<M: Metadata> Middleware<M> for MetricsMiddleware {
     {
         if let Call::MethodCall(ref request) = call {
             let method = request.method.clone();
+            let metrics = self.metrics.clone();
 
-            let metrics = self.clone();
+            // Ignore getTransaction in middleware; it'll be tracked in another module
+            if method != "getTransaction" {
+                metrics.increment_total_requests(&method);
+            }
 
-            let timer = metrics.record_metrics(&method);
-
-            let request_id = request.id.clone();
-            let request_jsonrpc = request.jsonrpc.clone();
+            // Record request duration for all methods
+            let timer = metrics.record_duration(&method);
 
             // Mark thread as started
             metrics.thread_started();
+
+            let request_id = request.id.clone();
+            let request_jsonrpc = request.jsonrpc.clone();
 
             let future = AssertUnwindSafe(next(call, meta))
                 .catch_unwind()
@@ -258,6 +216,7 @@ impl JsonRpcService {
         config: JsonRpcConfig,
         log_path: &Path,
         rpc_service_exit: Arc<RwLock<Exit>>,
+        metrics: Arc<Metrics>,
     ) -> Result<Self, String> {
         info!("rpc bound to {:?}", rpc_addr);
         info!("rpc configuration: {:?}", config);
@@ -286,7 +245,9 @@ impl JsonRpcService {
                             block_cache,
                             use_md5_row_key_salt,
                             enable_full_tx_cache,
+                            disable_tx_fallback,
                             ref cache_address,
+                            ..
                         }) = config.rpc_hbase_config
             {
                 let hbase_config = solana_storage_hbase::LedgerStorageConfig {
@@ -296,10 +257,11 @@ impl JsonRpcService {
                     block_cache,
                     use_md5_row_key_salt,
                     enable_full_tx_cache,
+                    disable_tx_fallback,
                     cache_address: cache_address.clone(),
                 };
                 runtime
-                    .block_on(solana_storage_hbase::LedgerStorage::new_with_config(hbase_config))
+                    .block_on(solana_storage_hbase::LedgerStorage::new_with_config(hbase_config, metrics.clone()))
                     .map(|hbase_ledger_storage| {
                         info!("HBase ledger storage initialized");
                         Some(Box::new(hbase_ledger_storage) as Box<dyn LedgerStorageAdapter>)
@@ -312,6 +274,46 @@ impl JsonRpcService {
                 None
             };
 
+        let fallback_ledger_storage =
+            if let Some(RpcHBaseConfig {
+                            enable_hbase_ledger_upload: false,
+                            ref fallback_hbase_address,
+                            timeout,
+                            block_cache,
+                            use_md5_row_key_salt,
+                            enable_full_tx_cache,
+                            ref cache_address,
+                            ..
+                        }) = config.rpc_hbase_config
+            {
+                if let Some(fallback_address) = fallback_hbase_address {
+                    let fallback_config = solana_storage_hbase::LedgerStorageConfig {
+                        read_only: true,
+                        timeout,
+                        address: fallback_address.clone(),
+                        block_cache,
+                        use_md5_row_key_salt,
+                        enable_full_tx_cache,
+                        disable_tx_fallback: false,
+                        cache_address: cache_address.clone(),
+                    };
+                    runtime
+                        .block_on(solana_storage_hbase::LedgerStorage::new_with_config(fallback_config, metrics.clone()))
+                        .map(|fallback_ledger_storage| {
+                            info!("Fallback ledger storage initialized");
+                            Some(Box::new(fallback_ledger_storage) as Box<dyn LedgerStorageAdapter>)
+                        })
+                        .unwrap_or_else(|err| {
+                            error!("Failed to initialize Fallback ledger storage: {:?}", err);
+                            None
+                        })
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
         let full_api = config.full_api;
         let max_request_body_size = config
             .max_request_body_size
@@ -320,6 +322,7 @@ impl JsonRpcService {
             config,
             rpc_service_exit.clone(),
             hbase_ledger_storage,
+            fallback_ledger_storage,
         );
 
         #[cfg(test)]
@@ -334,8 +337,8 @@ impl JsonRpcService {
                 move || {
                     renice_this_thread(rpc_niceness_adj).unwrap();
 
-                    let metrics_middleware = MetricsMiddleware::new();
-                    metrics_middleware.idle_threads_counter.set(rpc_threads as i64);
+                    let metrics_middleware = MetricsMiddleware::new(metrics.clone());
+                    metrics.idle_threads_counter.set(rpc_threads as i64);
 
                     // Create the MetaIoHandler and apply the middleware
                     let mut io = MetaIoHandler::with_middleware(metrics_middleware);

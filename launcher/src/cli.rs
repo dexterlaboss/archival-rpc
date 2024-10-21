@@ -12,11 +12,7 @@ use {
             is_niceness_adjustment_valid,
         },
     },
-    solana_net_utils::{
-        MINIMUM_VALIDATOR_PORT_RANGE_WIDTH,
-    },
     solana_sdk::{
-        quic::QUIC_PORT_OFFSET,
         rpc_port,
     },
 };
@@ -104,24 +100,6 @@ pub fn port_validator(port: String) -> Result<(), String> {
         .map_err(|e| format!("{e:?}"))
 }
 
-pub fn port_range_validator(port_range: String) -> Result<(), String> {
-    if let Some((start, end)) = solana_net_utils::parse_port_range(&port_range) {
-        if end - start < MINIMUM_VALIDATOR_PORT_RANGE_WIDTH {
-            Err(format!(
-                "Port range is too small.  Try --dynamic-port-range {}-{}",
-                start,
-                start + MINIMUM_VALIDATOR_PORT_RANGE_WIDTH
-            ))
-        } else if end.checked_add(QUIC_PORT_OFFSET).is_none() {
-            Err("Invalid dynamic_port_range.".to_string())
-        } else {
-            Ok(())
-        }
-    } else {
-        Err("Invalid port range".to_string())
-    }
-}
-
 pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorageRpcArgs) -> App<'a, 'a> {
     return App::new("solana-storage-rpc")
         .about("Solana Storage RPC Service")
@@ -194,6 +172,15 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .hidden(true)
                 .default_value("127.0.0.1:9090")
                 .help("Address of HBase instance to use"),
+        )
+        .arg(
+            Arg::with_name("fallback_hbase_address")
+                .long("fallback-hbase-address")
+                .value_name("ADDRESS")
+                .takes_value(true)
+                .hidden(true)
+                // .default_value("127.0.0.1:9090")
+                .help("Address of fallback HBase instance to use"),
         )
         .arg(
             Arg::with_name("rpc_hbase_timeout")

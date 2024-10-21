@@ -2,11 +2,6 @@
 
 use {
     crate::{
-        rpc::{
-            verify_and_parse_signatures_for_address_params,
-            check_is_at_least_confirmed,
-            verify_signature,
-        },
         custom_error::RpcCustomError,
     },
     crossbeam_channel::{
@@ -68,7 +63,65 @@ use {
     },
 };
 
+use {
+    solana_rpc_client_api::{
+        request::{
+            MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT,
+        },
+    },
+    std::{
+        sync::{
+            atomic::{
+                AtomicBool,
+                Ordering
+            },
+        },
+    },
+};
+
 pub const MAX_REQUEST_BODY_SIZE: usize = 50 * (1 << 10); // 50kB
+
+pub(crate) fn verify_and_parse_signatures_for_address_params(
+    address: String,
+    before: Option<String>,
+    until: Option<String>,
+    limit: Option<usize>,
+) -> Result<(Pubkey, Option<Signature>, Option<Signature>, usize)> {
+    let address = verify_pubkey(&address)?;
+    let before = before
+        .map(|ref before| verify_signature(before))
+        .transpose()?;
+    let until = until.map(|ref until| verify_signature(until)).transpose()?;
+    let limit = limit.unwrap_or(MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT);
+
+    if limit == 0 || limit > MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT {
+        return Err(Error::invalid_params(format!(
+            "Invalid limit; max {MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT}"
+        )));
+    }
+    Ok((address, before, until, limit))
+}
+
+pub(crate) fn check_is_at_least_confirmed(commitment: CommitmentConfig) -> Result<()> {
+    if !commitment.is_at_least_confirmed() {
+        return Err(Error::invalid_params(
+            "Method does not support commitment below `confirmed`",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn verify_signature(input: &str) -> Result<Signature> {
+    input
+        .parse()
+        .map_err(|e| Error::invalid_params(format!("Invalid param: {e:?}")))
+}
+
+pub fn verify_pubkey(input: &str) -> Result<Pubkey> {
+    input
+        .parse()
+        .map_err(|e| Error::invalid_params(format!("Invalid param: {e:?}")))
+}
 
 fn new_response<T>(value: T) -> RpcResponse<T> {
     RpcResponse {
@@ -87,14 +140,12 @@ pub struct RpcBlockCheck {
 #[derive(Debug, Default, Clone)]
 pub struct JsonRpcConfig {
     pub enable_rpc_transaction_history: bool,
-    // pub enable_extended_tx_metadata_storage: bool,
     pub rpc_hbase_config: Option<RpcHBaseConfig>,
     pub rpc_threads: usize,
     pub rpc_niceness_adj: i8,
     pub full_api: bool,
     pub obsolete_v1_7_api: bool,
     pub max_request_body_size: Option<usize>,
-    // pub block_cache: Option<NonZeroUsize>,
     pub max_get_blocks_range: Option<u64>,
 }
 
@@ -111,10 +162,12 @@ impl JsonRpcConfig {
 pub struct RpcHBaseConfig {
     pub enable_hbase_ledger_upload: bool,
     pub hbase_address: String,
+    pub fallback_hbase_address: Option<String>,
     pub timeout: Option<Duration>,
     pub block_cache: Option<NonZeroUsize>,
     pub use_md5_row_key_salt: bool,
     pub enable_full_tx_cache: bool,
+    pub disable_tx_fallback: bool,
     pub cache_address: Option<String>,
 }
 
@@ -124,10 +177,12 @@ impl Default for RpcHBaseConfig {
         Self {
             enable_hbase_ledger_upload: false,
             hbase_address,
+            fallback_hbase_address: None,
             timeout: None,
             block_cache: None,
             use_md5_row_key_salt: false,
             enable_full_tx_cache: false,
+            disable_tx_fallback: false,
             cache_address: None,
         }
     }
@@ -139,6 +194,7 @@ pub struct JsonRpcRequestProcessor {
     #[allow(dead_code)]
     rpc_service_exit: Arc<RwLock<Exit>>,
     hbase_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
+    fallback_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
 }
 
 impl Metadata for JsonRpcRequestProcessor {}
@@ -149,6 +205,7 @@ impl Clone for JsonRpcRequestProcessor {
             config: self.config.clone(),
             rpc_service_exit: Arc::clone(&self.rpc_service_exit),
             hbase_ledger_storage: self.hbase_ledger_storage.as_ref().map(|storage| storage.clone_box()),
+            fallback_ledger_storage: self.hbase_ledger_storage.as_ref().map(|storage| storage.clone_box()),
         }
     }
 }
@@ -164,6 +221,7 @@ impl JsonRpcRequestProcessor {
         config: JsonRpcConfig,
         rpc_service_exit: Arc<RwLock<Exit>>,
         hbase_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
+        fallback_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
     ) -> (Self, Receiver<TransactionInfo>) {
         let (_sender, receiver) = unbounded();
         (
@@ -171,6 +229,7 @@ impl JsonRpcRequestProcessor {
                 config,
                 rpc_service_exit,
                 hbase_ledger_storage,
+                fallback_ledger_storage,
             },
             receiver,
         )
@@ -410,17 +469,33 @@ impl JsonRpcRequestProcessor {
                     Ok(confirmed_tx_with_meta.encode(encoding, max_supported_transaction_version).map_err(RpcCustomError::from)?)
                 };
 
+            // First, try to get the transaction from hbase_ledger_storage
             if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
-                return hbase_ledger_storage
+                if let Some(tx) = hbase_ledger_storage
                     .get_confirmed_transaction(&signature)
                     .await
                     .unwrap_or(None)
                     .map(encode_transaction)
-                    .transpose();
+                    .transpose()? {
+                    return Ok(Some(tx));
+                }
+            }
+
+            // If not found, fall back to fallback_ledger_storage
+            if let Some(fallback_ledger_storage) = &self.fallback_ledger_storage {
+                if let Some(tx) = fallback_ledger_storage
+                    .get_confirmed_transaction(&signature)
+                    .await
+                    .unwrap_or(None)
+                    .map(encode_transaction)
+                    .transpose()? {
+                    return Ok(Some(tx));
+                }
             }
         } else {
             return Err(RpcCustomError::TransactionHistoryNotAvailable.into());
         }
+
         Ok(None)
     }
 
@@ -951,3 +1026,150 @@ pub mod storage_rpc_deprecated_v1_7 {
     }
 }
 
+pub fn create_validator_exit(exit: &Arc<AtomicBool>) -> Arc<RwLock<Exit>> {
+    let mut validator_exit = Exit::default();
+    let exit_ = exit.clone();
+    validator_exit.register_exit(Box::new(move || exit_.store(true, Ordering::Relaxed)));
+    Arc::new(RwLock::new(validator_exit))
+}
+
+#[cfg(test)]
+pub mod tests {
+    use {
+        super::{
+            storage_rpc_deprecated_v1_7::*,
+            storage_rpc_full::*, storage_rpc_minimal::*, *,
+        },
+        solana_sdk::{
+            system_transaction,
+            signature::{Keypair, Signer},
+            hash::{hash, Hash},
+        },
+        serde::de::DeserializeOwned,
+        jsonrpc_core::{futures, ErrorCode, MetaIoHandler, Output, Response, Value},
+    };
+
+    fn create_test_request(method: &str, params: Option<serde_json::Value>) -> serde_json::Value {
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1u64,
+            "method": method,
+            "params": params,
+        })
+    }
+
+    fn parse_success_result<T: DeserializeOwned>(response: Response) -> T {
+        if let Response::Single(output) = response {
+            match output {
+                Output::Success(success) => serde_json::from_value(success.result).unwrap(),
+                Output::Failure(failure) => {
+                    panic!("Expected success but received: {failure:?}");
+                }
+            }
+        } else {
+            panic!("Expected single response");
+        }
+    }
+
+    fn parse_failure_response(response: Response) -> (i64, String) {
+        if let Response::Single(output) = response {
+            match output {
+                Output::Success(success) => {
+                    panic!("Expected failure but received: {success:?}");
+                }
+                Output::Failure(failure) => (failure.error.code.code(), failure.error.message),
+            }
+        } else {
+            panic!("Expected single response");
+        }
+    }
+
+    struct RpcHandler {
+        io: MetaIoHandler<JsonRpcRequestProcessor>,
+        meta: JsonRpcRequestProcessor,
+    }
+
+    impl RpcHandler {
+        fn start() -> Self {
+            Self::start_with_config(JsonRpcConfig {
+                enable_rpc_transaction_history: true,
+                ..JsonRpcConfig::default()
+            })
+        }
+
+        fn start_with_config(config: JsonRpcConfig) -> Self {
+            let exit = Arc::new(AtomicBool::new(false));
+            let validator_exit = create_validator_exit(&exit);
+
+            let meta = JsonRpcRequestProcessor::new(
+                config,
+                validator_exit,
+                None,
+                None,
+            )
+                .0;
+
+            let mut io = MetaIoHandler::default();
+            io.extend_with(storage_rpc_minimal::MinimalImpl.to_delegate());
+            io.extend_with(storage_rpc_full::FullImpl.to_delegate());
+            io.extend_with(storage_rpc_deprecated_v1_7::DeprecatedV1_7Impl.to_delegate());
+            Self {
+                io,
+                meta,
+            }
+        }
+
+        fn handle_request_sync(&self, req: serde_json::Value) -> Response {
+            let response = &self
+                .io
+                .handle_request_sync(&req.to_string(), self.meta.clone())
+                .expect("no response");
+            serde_json::from_str(response).expect("failed to deserialize response")
+        }
+    }
+
+    #[test]
+    fn test_rpc_verify_pubkey() {
+        let pubkey = solana_sdk::pubkey::new_rand();
+        assert_eq!(verify_pubkey(&pubkey.to_string()).unwrap(), pubkey);
+        let bad_pubkey = "a1b2c3d4";
+        assert_eq!(
+            verify_pubkey(bad_pubkey),
+            Err(Error::invalid_params("Invalid param: WrongSize"))
+        );
+    }
+
+    #[test]
+    fn test_rpc_verify_signature() {
+        let tx = system_transaction::transfer(
+            &Keypair::new(),
+            &solana_sdk::pubkey::new_rand(),
+            20,
+            hash(&[0]),
+        );
+        assert_eq!(
+            verify_signature(&tx.signatures[0].to_string()).unwrap(),
+            tx.signatures[0]
+        );
+        let bad_signature = "a1b2c3d4";
+        assert_eq!(
+            verify_signature(bad_signature),
+            Err(Error::invalid_params("Invalid param: WrongSize"))
+        );
+    }
+
+    #[test]
+    fn test_rpc_get_version() {
+        let rpc = RpcHandler::start();
+        let request = create_test_request("getVersion", None);
+        let result: Value = parse_success_result(rpc.handle_request_sync(request));
+        let expected = {
+            let version = solana_version::Version::default();
+            json!({
+                "solana-core": version.to_string(),
+                "feature-set": version.feature_set,
+            })
+        };
+        assert_eq!(result, expected);
+    }
+}

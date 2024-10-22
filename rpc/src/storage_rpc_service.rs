@@ -9,7 +9,7 @@ use {
             *,
         },
     },
-    metrics::Metrics,
+    solana_metrics::Metrics,
     crossbeam_channel::unbounded,
     jsonrpc_core::{
         MetaIoHandler,

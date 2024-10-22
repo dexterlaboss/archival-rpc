@@ -13,7 +13,7 @@ edition = { workspace = true }
 prometheus = { workspace = true }
 
 [lib]
-name = "metrics"
+name = "solana_metrics"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

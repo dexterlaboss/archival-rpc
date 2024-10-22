@@ -10,7 +10,7 @@ use {
     },
     async_trait::async_trait,
     log::*,
-    metrics::Metrics,
+    solana_metrics::Metrics,
     // solana_metrics::{datapoint_info, inc_new_counter_debug},
     solana_sdk::{
         clock::{

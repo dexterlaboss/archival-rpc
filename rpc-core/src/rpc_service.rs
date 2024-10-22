@@ -10,7 +10,7 @@ use {
         storage_rpc::JsonRpcConfig,
         storage_rpc_service::JsonRpcService,
     },
-    metrics::Metrics,
+    solana_metrics::Metrics,
     solana_sdk::{
         exit::Exit,
     },

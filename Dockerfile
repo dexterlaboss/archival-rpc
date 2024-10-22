@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create a new empty workspace project to cache dependencies
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
-COPY rpc/Cargo.toml rpc-core/Cargo.toml storage-adapter/Cargo.toml storage-hbase/Cargo.toml \
+COPY metrics/Cargo.toml perf/Cargo.toml net-utils/Cargo.toml rpc/Cargo.toml rpc-core/Cargo.toml storage-adapter/Cargo.toml storage-hbase/Cargo.toml \
      storage-bigtable/Cargo.toml storage-bigtable/build-proto/Cargo.toml storage-proto/Cargo.toml launcher/Cargo.toml ./
 
 # Build dependencies only

@@ -298,6 +298,12 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .help("Enable block transaction cache."),
         )
         .arg(
+            Arg::with_name("disable_tx_fallback")
+                .long("disable-tx-fallback")
+                .takes_value(false)
+                .help("Disable full_tx query fallback to tx index and blocks."),
+        )
+        .arg(
             Arg::with_name("cache_address")
                 .long("cache-address")
                 .value_name("ADDRESS")

@@ -3172,7 +3172,7 @@ dependencies = [
 
 [[package]]
 name = "proto"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "protobuf-src",
  "tonic-build",
@@ -4200,7 +4200,7 @@ dependencies = [
 
 [[package]]
 name = "solana-launcher"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "clap 2.34.0",
  "console",
@@ -4212,7 +4212,7 @@ dependencies = [
  "signal-hook",
  "solana-clap-utils",
  "solana-logger",
- "solana-net-utils 1.5.4",
+ "solana-net-utils 1.5.5",
  "solana-rpc",
  "solana-rpc-core",
  "solana-sdk",
@@ -4259,7 +4259,7 @@ dependencies = [
 
 [[package]]
 name = "solana-metrics"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "prometheus",
 ]
@@ -4280,7 +4280,7 @@ dependencies = [
 
 [[package]]
 name = "solana-net-utils"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "url 2.5.2",
 ]
@@ -4309,7 +4309,7 @@ dependencies = [
 
 [[package]]
 name = "solana-perf"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "caps",
  "libc",
@@ -4511,7 +4511,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "crossbeam-channel",
  "futures 0.3.31",
@@ -4527,8 +4527,8 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
- "solana-metrics 1.5.4",
- "solana-perf 1.5.4",
+ "solana-metrics 1.5.5",
+ "solana-perf 1.5.5",
  "solana-rpc-client-api",
  "solana-sdk",
  "solana-send-transaction-service",
@@ -4604,7 +4604,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc-core"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "crossbeam-channel",
  "log",
@@ -4614,8 +4614,8 @@ dependencies = [
  "rustc_version",
  "serde",
  "serde_derive",
- "solana-metrics 1.5.4",
- "solana-net-utils 1.5.4",
+ "solana-metrics 1.5.5",
+ "solana-net-utils 1.5.5",
  "solana-rpc",
  "solana-sdk",
  "solana-version",
@@ -4792,7 +4792,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-adapter"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "async-trait",
  "bincode",
@@ -4812,7 +4812,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-bigtable"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "async-trait",
  "backoff",
@@ -4845,7 +4845,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-hbase"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "async-trait",
  "backoff",
@@ -4869,7 +4869,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "smpl_jwt",
- "solana-metrics 1.5.4",
+ "solana-metrics 1.5.5",
  "solana-sdk",
  "solana-storage-adapter",
  "solana-storage-proto",
@@ -4883,7 +4883,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-proto"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "bincode",
  "bs58",

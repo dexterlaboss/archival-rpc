@@ -139,6 +139,7 @@ impl LedgerStorage {
     }
 
     pub async fn new_with_config(config: LedgerStorageConfig, metrics: Arc<Metrics>) -> Result<Self> {
+        debug!("Creating ledger storage instance with config: {:?}", config);
         let LedgerStorageConfig {
             read_only,
             timeout,
@@ -399,9 +400,11 @@ impl LedgerStorageAdapter for LedgerStorage {
         signature: &Signature,
     ) -> Result<Option<ConfirmedTransactionWithStatusMeta>> {
         debug!(
-        "LedgerStorage::get_confirmed_transaction request received: {:?}",
-        signature
-    );
+            "LedgerStorage::get_confirmed_transaction request received: {:?}",
+            signature
+        );
+        debug!("LedgerStorage::get_confirmed_transaction using address: {:?}", self.connection);
+
         let mut source = "tx";
         let tx_type;
         let epoch: u64;
@@ -444,11 +447,18 @@ impl LedgerStorageAdapter for LedgerStorage {
             self.metrics.record_transaction(source, epoch, tx_type);
 
             return Ok(Some(full_tx));
+        } else {
+            debug!("Transaction not found in the full_tx table");
         }
 
+        debug!("disable_tx_fallback: {:?}", self.disable_tx_fallback);
+
         if self.disable_tx_fallback {
+            debug!("Fallback to tx table is disabled");
             return Ok(None);
         }
+
+        debug!("Looking for transaction in tx table");
 
         let mut hbase = self.connection.client();
 
@@ -473,9 +483,9 @@ impl LedgerStorageAdapter for LedgerStorage {
             Some(tx_with_meta) => {
                 if tx_with_meta.transaction_signature() != signature {
                     warn!(
-                    "Transaction info or confirmed block for {} is corrupt",
-                    signature
-                );
+                        "Transaction info or confirmed block for {} is corrupt",
+                        signature
+                    );
                     Ok(None)
                 } else {
                     tx_type = determine_transaction_type(&tx_with_meta); // Determine the transaction type
@@ -596,7 +606,7 @@ impl LedgerStorageAdapter for LedgerStorage {
                 Some(format!(
                     "{}{}",
                     address_prefix,
-                    slot_to_tx_by_addr_key(last_slot),
+                    slot_to_tx_by_addr_key(last_slot.saturating_sub(1)),
                 )),
                 limit as i64 + starting_slot_tx_len as i64,
             )
@@ -638,13 +648,17 @@ impl LedgerStorageAdapter for LedgerStorage {
             debug!("Filtering the result data");
 
             for tx_by_addr_info in cell_data.into_iter() {
+                debug!("Checking result [slot: {:?}, index: {:?}], signature: {:?}", slot, tx_by_addr_info.index, tx_by_addr_info.signature);
+
                 // Filter out records before `before_transaction_index`
                 if !before_fallback && slot == first_slot && tx_by_addr_info.index >= before_transaction_index {
+                    debug!("Skipping transaction before [slot: {:?}, index: {:?}], signature: {:?}", slot, tx_by_addr_info.index, tx_by_addr_info.signature);
                     continue;
                 }
 
                 // Filter out records after `until_transaction_index` unless fallback was used
                 if !until_fallback && slot == last_slot && tx_by_addr_info.index <= until_transaction_index {
+                    debug!("Skipping transaction until [slot: {:?}, index: {:?}], signature: {:?}", slot, tx_by_addr_info.index, tx_by_addr_info.signature);
                     continue;
                 }
 

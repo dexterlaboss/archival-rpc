@@ -75,7 +75,7 @@ impl std::convert::From<thrift::Error> for Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct HBaseConnection {
     address: String,
     // timeout: Option<Duration>,

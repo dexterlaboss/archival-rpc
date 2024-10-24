@@ -205,7 +205,7 @@ impl Clone for JsonRpcRequestProcessor {
             config: self.config.clone(),
             rpc_service_exit: Arc::clone(&self.rpc_service_exit),
             hbase_ledger_storage: self.hbase_ledger_storage.as_ref().map(|storage| storage.clone_box()),
-            fallback_ledger_storage: self.hbase_ledger_storage.as_ref().map(|storage| storage.clone_box()),
+            fallback_ledger_storage: self.fallback_ledger_storage.as_ref().map(|storage| storage.clone_box()),
         }
     }
 }
@@ -490,6 +490,8 @@ impl JsonRpcRequestProcessor {
                     .map(encode_transaction)
                     .transpose()? {
                     return Ok(Some(tx));
+                } else {
+                    info!("Transaction not found in the fallback ledger storage");
                 }
             }
         } else {

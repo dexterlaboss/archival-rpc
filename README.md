@@ -9,7 +9,7 @@ Archival RPC also introduces alternative storage with a self-hosted HBase databa
 The Archival RPC is structured into two primary components for enhanced scalability and separation of concerns:
 
 - **RPC Server**: This is the repository you're currently viewing. It serves as the backbone for communication.
-- **Ingestor Module**: Located at [ingestor-kafka](https://github.com/dexterlaboss/ingestor-kafka), this component is dedicated to data ingestion. 
+- **Ingestor Module**: Located at [ingestor-kafka](https://github.com/dexterlaboss/ingestor-kafka) or [ingestor-kafka-hbase](https://github.com/dexterlaboss/ingestor-kafka-hbase), this component is dedicated to data ingestion. 
 By segregating data ingestion from the serving layer, we provide a scalable architecture that allows each component to scale independently based on demand. The ingestor module is equipped to pull full, unparsed blocks directly from a Kafka topic, with ongoing efforts to integrate GRPC support for enhanced data interchange.
 
 

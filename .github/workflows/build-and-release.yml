@@ -47,9 +47,17 @@ jobs:
           profile: minimal
           override: true
 
-      # Build the project with Cargo
-      - name: Build with cargo
-        run: cargo build --release
+      # Build the project with Cargo for x86_64
+      - name: Build for x86_64
+        env:
+          CARGO_TARGET: x86_64-unknown-linux-gnu
+        run: cargo build --release --target $CARGO_TARGET
+
+      # Build the project with Cargo for arm64
+      - name: Build for arm64
+        env:
+          CARGO_TARGET: aarch64-unknown-linux-gnu
+        run: cargo build --release --target $CARGO_TARGET
 
       # Log in to DockerHub
       - name: Login to DockerHub
@@ -58,13 +66,14 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # Build and push the Docker image with layer caching
+      # Build and push the Docker image for multi-architecture
       - name: Build and push Docker image
         run: |
           docker buildx create --use
           docker buildx build \
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
+            --platform linux/amd64,linux/arm64 \
             --tag dexterlaboss/archival-rpc:${GITHUB_REF_NAME} \
             --push .
 
@@ -79,13 +88,24 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Upload the compiled binary to the release
-      - name: Upload compiled binary to GitHub Release
+      # Upload the compiled binary for x86_64 to the release
+      - name: Upload x86_64 binary to GitHub Release
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.gh-release.outputs.upload_url }}
-          asset_path: ./target/release/archival-rpc
+          asset_path: ./target/x86_64-unknown-linux-gnu/release/archival-rpc
           asset_name: archival_rpc_${{ github.ref_name }}_linux_amd64
+          asset_content_type: application/octet-stream
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Upload the compiled binary for arm64 to the release
+      - name: Upload arm64 binary to GitHub Release
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.gh-release.outputs.upload_url }}
+          asset_path: ./target/aarch64-unknown-linux-gnu/release/archival-rpc
+          asset_name: archival_rpc_${{ github.ref_name }}_linux_arm64
           asset_content_type: application/octet-stream
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

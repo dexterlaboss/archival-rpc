@@ -59,10 +59,11 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       # Build and push the Docker image with layer caching
-      - name: Build and push Docker image
+      - name: Build and push multi-arch Docker image
         run: |
           docker buildx create --use
           docker buildx build \
+            --platform linux/amd64,linux/arm64 \
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
             --tag dexterlaboss/archival-rpc:${GITHUB_REF_NAME} \
@@ -79,13 +80,44 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Upload the compiled binary to the release
-      - name: Upload compiled binary to GitHub Release
+      # Extract x86_64 binary from Docker image
+      - name: Extract x86_64 binary from Docker
+        run: |
+          mkdir -p ${{ github.workspace }}/output
+          docker run --rm \
+            --platform linux/amd64 \
+            -v ${{ github.workspace }}/output:/output \
+            dexterlaboss/archival-rpc:${GITHUB_REF_NAME} \
+            cp /solana/archival-rpc /output/archival_rpc_${GITHUB_REF_NAME}_linux_amd64
+
+      # Extract arm64 binary from Docker image
+      - name: Extract arm64 binary from Docker
+        run: |
+          mkdir -p ${{ github.workspace }}/output
+          docker run --rm \
+            --platform linux/arm64 \
+            -v ${{ github.workspace }}/output:/output \
+            dexterlaboss/archival-rpc:${GITHUB_REF_NAME} \
+            cp /solana/archival-rpc /output/archival_rpc_${GITHUB_REF_NAME}_linux_arm64
+
+      # Upload x86_64 binary to GitHub Release
+      - name: Upload x86_64 binary to GitHub Release
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.gh-release.outputs.upload_url }}
-          asset_path: ./target/release/archival-rpc
+          asset_path: ./output/archival_rpc_${{ github.ref_name }}_linux_amd64
           asset_name: archival_rpc_${{ github.ref_name }}_linux_amd64
+          asset_content_type: application/octet-stream
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Upload arm64 binary to GitHub Release
+      - name: Upload arm64 binary to GitHub Release
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.gh-release.outputs.upload_url }}
+          asset_path: ./output/archival_rpc_${{ github.ref_name }}_linux_arm64
+          asset_name: archival_rpc_${{ github.ref_name }}_linux_arm64
           asset_content_type: application/octet-stream
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

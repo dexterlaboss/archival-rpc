@@ -13,43 +13,43 @@ jobs:
       - uses: actions/checkout@v3
 
       # Cache the Cargo registry (dependencies)
-      - name: Cache cargo registry
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
+#      - name: Cache cargo registry
+#        uses: actions/cache@v3
+#        with:
+#          path: ~/.cargo/registry
+#          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+#          restore-keys: |
+#            ${{ runner.os }}-cargo-registry-
 
       # Cache the Cargo index (Git dependencies)
-      - name: Cache cargo index
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-index-
+#      - name: Cache cargo index
+#        uses: actions/cache@v3
+#        with:
+#          path: ~/.cargo/git
+#          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+#          restore-keys: |
+#            ${{ runner.os }}-cargo-index-
 
       # Cache the target directory (build artifacts)
-      - name: Cache build artifacts
-        uses: actions/cache@v3
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-build-
+#      - name: Cache build artifacts
+#        uses: actions/cache@v3
+#        with:
+#          path: target
+#          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+#          restore-keys: |
+#            ${{ runner.os }}-cargo-build-
 
       # Set up Rust (use version 1.70.0)
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: 1.70.0
-          profile: minimal
-          override: true
+#      - name: Set up Rust
+#        uses: actions-rs/toolchain@v1
+#        with:
+#          toolchain: 1.70.0
+#          profile: minimal
+#          override: true
 
       # Build the project with Cargo
-      - name: Build with cargo
-        run: cargo build --release
+#      - name: Build with cargo
+#        run: cargo build --release
 
       # Log in to DockerHub
       - name: Login to DockerHub
@@ -58,16 +58,30 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # Build and push the Docker image with layer caching
-      - name: Build and push multi-arch Docker image
+      # Build and push multi-platform Docker images
+      - name: Build and push multi-platform Docker images
         run: |
           docker buildx create --use
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
-            --cache-from type=gha \
-            --cache-to type=gha,mode=max \
             --tag dexterlaboss/archival-rpc:${GITHUB_REF_NAME} \
             --push .
+
+      # Extract x86_64 binary from Docker container
+      - name: Extract x86_64 binary
+        run: |
+          mkdir -p ${{ github.workspace }}/output
+          docker create --platform linux/amd64 --name extract-amd64 dexterlaboss/archival-rpc:${GITHUB_REF_NAME}
+          docker cp extract-amd64:/solana/archival_rpc ${{ github.workspace }}/output/archival_rpc_${{ github.ref_name }}_linux_amd64
+          docker rm extract-amd64
+
+      # Extract arm64 binary from Docker container
+      - name: Extract arm64 binary
+        run: |
+          mkdir -p ${{ github.workspace }}/output
+          docker create --platform linux/arm64 --name extract-arm64 dexterlaboss/archival-rpc:${GITHUB_REF_NAME}
+          docker cp extract-arm64:/solana/archival_rpc ${{ github.workspace }}/output/archival_rpc_${{ github.ref_name }}_linux_arm64
+          docker rm extract-arm64
 
       # Create GitHub Release
       - name: Create GitHub Release
@@ -79,26 +93,6 @@ jobs:
           body: 'Release of version ${{ github.ref }}'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # Extract x86_64 binary from Docker image
-      - name: Extract x86_64 binary from Docker
-        run: |
-          mkdir -p ${{ github.workspace }}/output
-          docker run --rm \
-            --platform linux/amd64 \
-            -v ${{ github.workspace }}/output:/output \
-            dexterlaboss/archival-rpc:${GITHUB_REF_NAME} \
-            cp /solana/archival-rpc /output/archival_rpc_${GITHUB_REF_NAME}_linux_amd64
-
-      # Extract arm64 binary from Docker image
-      - name: Extract arm64 binary from Docker
-        run: |
-          mkdir -p ${{ github.workspace }}/output
-          docker run --rm \
-            --platform linux/arm64 \
-            -v ${{ github.workspace }}/output:/output \
-            dexterlaboss/archival-rpc:${GITHUB_REF_NAME} \
-            cp /solana/archival-rpc /output/archival_rpc_${GITHUB_REF_NAME}_linux_arm64
 
       # Upload x86_64 binary to GitHub Release
       - name: Upload x86_64 binary to GitHub Release

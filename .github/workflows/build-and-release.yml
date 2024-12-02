@@ -12,44 +12,43 @@ jobs:
       # Checkout the code
       - uses: actions/checkout@v3
 
-      # Cache the Cargo registry (dependencies)
-#      - name: Cache cargo registry
-#        uses: actions/cache@v3
-#        with:
-#          path: ~/.cargo/registry
-#          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-#          restore-keys: |
-#            ${{ runner.os }}-cargo-registry-
+      # Set up Rust
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.70.0
+          profile: minimal
+          target: "x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu" # Add required targets
+          override: true
 
-      # Cache the Cargo index (Git dependencies)
-#      - name: Cache cargo index
-#        uses: actions/cache@v3
-#        with:
-#          path: ~/.cargo/git
-#          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-#          restore-keys: |
-#            ${{ runner.os }}-cargo-index-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-cache"
 
-      # Cache the target directory (build artifacts)
-#      - name: Cache build artifacts
-#        uses: actions/cache@v3
-#        with:
-#          path: target
-#          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
-#          restore-keys: |
-#            ${{ runner.os }}-cargo-build-
+      # Build x86_64 binary
+      - name: Build x86_64 binary
+        run: |
+          cargo build --release --target x86_64-unknown-linux-gnu
+          mkdir -p output/linux/amd64
+          cp target/x86_64-unknown-linux-gnu/release/archival-rpc output/linux/amd64/
 
-      # Set up Rust (use version 1.70.0)
-#      - name: Set up Rust
-#        uses: actions-rs/toolchain@v1
-#        with:
-#          toolchain: 1.70.0
-#          profile: minimal
-#          override: true
+      # Build arm64 binary
+      - name: Build arm64 binary
+        run: |
+          cargo build --release --target aarch64-unknown-linux-gnu
+          mkdir -p output/linux/arm64
+          cp target/aarch64-unknown-linux-gnu/release/archival-rpc output/linux/arm64/
 
-      # Build the project with Cargo
-#      - name: Build with cargo
-#        run: cargo build --release
+      # Build and push Docker images
+      - name: Build and push Docker images
+        run: |
+          docker buildx create --use
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --build-arg AMD64_BINARY=output/linux/amd64/archival-rpc \
+            --build-arg ARM64_BINARY=output/linux/arm64/archival-rpc \
+            --tag dexterlaboss/archival-rpc:${GITHUB_REF_NAME} \
+            --push .
 
       # Log in to DockerHub
       - name: Login to DockerHub
@@ -57,15 +56,6 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-
-      # Build and push multi-platform Docker images
-      - name: Build and push multi-platform Docker images
-        run: |
-          docker buildx create --use
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --tag dexterlaboss/archival-rpc:${GITHUB_REF_NAME} \
-            --push .
 
       # Extract x86_64 binary from Docker container
       - name: Extract x86_64 binary
@@ -99,8 +89,8 @@ jobs:
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.gh-release.outputs.upload_url }}
-          asset_path: ./output/archival_rpc_${{ github.ref_name }}_linux_amd64
-          asset_name: archival_rpc_${{ github.ref_name }}_linux_amd64
+          asset_path: ./output/linux/amd64/archival-rpc
+          asset_name: archival-rpc_${{ github.ref_name }}_linux_amd64
           asset_content_type: application/octet-stream
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -110,8 +100,8 @@ jobs:
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.gh-release.outputs.upload_url }}
-          asset_path: ./output/archival_rpc_${{ github.ref_name }}_linux_arm64
-          asset_name: archival_rpc_${{ github.ref_name }}_linux_arm64
+          asset_path: ./output/linux/arm64/archival-rpc
+          asset_name: archival-rpc_${{ github.ref_name }}_linux_arm64
           asset_content_type: application/octet-stream
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

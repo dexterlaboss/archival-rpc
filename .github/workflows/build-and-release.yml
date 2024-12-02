@@ -65,8 +65,8 @@ jobs:
           docker buildx create --use
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
-            --build-arg AMD64_BINARY=output/linux/amd64/archival-rpc \
-            --build-arg ARM64_BINARY=output/linux/arm64/archival-rpc \
+            --build-arg AMD64_BINARY="$(pwd)/output/linux/amd64/archival-rpc" \
+            --build-arg ARM64_BINARY="$(pwd)/output/linux/arm64/archival-rpc" \
             --tag dexterlaboss/archival-rpc:${GITHUB_REF_NAME} \
             --push .
 

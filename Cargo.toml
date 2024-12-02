@@ -19,7 +19,7 @@ exclude = []
 resolver = "2"
 
 [workspace.package]
-version = "1.5.16"
+version = "1.5.17"
 authors = ["Dexterlab <support@dexterlab.com>"]
 repository = "https://github.com/dexterlaboss/archival-rpc"
 homepage = "https://dexterlab.com/"

@@ -8,14 +8,7 @@ ARG AMD64_BINARY
 ARG ARM64_BINARY
 ARG TARGETARCH
 
-# Set target architecture and copy the appropriate binary
-RUN if [ "$TARGETARCH" = "amd64" ]; then \
-      cp "$AMD64_BINARY" /solana/archival-rpc; \
-    elif [ "$TARGETARCH" = "arm64" ]; then \
-      cp "$ARM64_BINARY" /solana/archival-rpc; \
-    else \
-      echo "Unsupported architecture: $TARGETARCH" && exit 1; \
-    fi
+COPY output/linux/${TARGETARCH}/archival-rpc /solana/archival-rpc
 
 # Expose the necessary port
 EXPOSE 8899

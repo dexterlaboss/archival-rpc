@@ -52,6 +52,16 @@ jobs:
           mkdir -p output/linux/arm64
           cp target/aarch64-unknown-linux-gnu/release/archival-rpc output/linux/arm64/
 
+      - name: Build and push Docker images
+        run: |
+          docker buildx create --use
+          docker buildx build \
+            --platform linux/arm64 \
+            --build-arg AMD64_BINARY="$(pwd)/output/linux/amd64/archival-rpc" \
+            --build-arg ARM64_BINARY="$(pwd)/output/linux/arm64/archival-rpc" \
+            --tag dexterlaboss/archival-rpc:${GITHUB_REF_NAME} \
+            --push .
+
       # Build x86_64 binary
       - name: Build x86_64 binary
         run: |
@@ -60,15 +70,15 @@ jobs:
           cp target/x86_64-unknown-linux-gnu/release/archival-rpc output/linux/amd64/
 
       # Build and push Docker images
-      - name: Build and push Docker images
-        run: |
-          docker buildx create --use
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --build-arg AMD64_BINARY="$(pwd)/output/linux/amd64/archival-rpc" \
-            --build-arg ARM64_BINARY="$(pwd)/output/linux/arm64/archival-rpc" \
-            --tag dexterlaboss/archival-rpc:${GITHUB_REF_NAME} \
-            --push .
+#      - name: Build and push Docker images
+#        run: |
+#          docker buildx create --use
+#          docker buildx build \
+#            --platform linux/amd64,linux/arm64 \
+#            --build-arg AMD64_BINARY="$(pwd)/output/linux/amd64/archival-rpc" \
+#            --build-arg ARM64_BINARY="$(pwd)/output/linux/arm64/archival-rpc" \
+#            --tag dexterlaboss/archival-rpc:${GITHUB_REF_NAME} \
+#            --push .
 
       # Log in to DockerHub
       - name: Login to DockerHub

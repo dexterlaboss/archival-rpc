@@ -18,8 +18,15 @@ jobs:
         with:
           toolchain: 1.70.0
           profile: minimal
-          target: "x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu" # Add required targets
           override: true
+
+      # Add x86_64 target
+      - name: Add x86_64 target
+        run: rustup target add x86_64-unknown-linux-gnu
+
+      # Add aarch64 target
+      - name: Add aarch64 target
+        run: rustup target add aarch64-unknown-linux-gnu
 
       - uses: Swatinem/rust-cache@v2
         with:

@@ -27,13 +27,18 @@ jobs:
             gcc-aarch64-linux-gnu \
             libc6-dev-arm64-cross
 
-      # Add x86_64 target
-      - name: Add x86_64 target
-        run: rustup target add x86_64-unknown-linux-gnu
+      # Add Rust targets
+      - name: Add Rust targets
+        run: |
+          rustup target add x86_64-unknown-linux-gnu
+          rustup target add aarch64-unknown-linux-gnu
 
-      # Add aarch64 target
-      - name: Add aarch64 target
-        run: rustup target add aarch64-unknown-linux-gnu
+      # Set up Cargo configuration for cross-compilation
+      - name: Configure Cargo for cross-compilation
+        run: |
+          mkdir -p .cargo
+          echo '[target.aarch64-unknown-linux-gnu]' >> .cargo/config.toml
+          echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
 
       - uses: Swatinem/rust-cache@v2
         with:

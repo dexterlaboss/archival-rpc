@@ -44,6 +44,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-cache"
+          shared-key: dependencies-only
 
       # Build arm64 binary
       - name: Build arm64 binary

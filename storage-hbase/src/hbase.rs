@@ -4,11 +4,11 @@ use {
     },
     backoff::{future::retry, ExponentialBackoff},
     log::*,
-    std::{
-        time::{
-            Duration,
-        },
-    },
+    // std::{
+    //     time::{
+    //         Duration,
+    //     },
+    // },
     thiserror::Error,
     hbase_thrift::hbase::{BatchMutation, HbaseSyncClient, THbaseSyncClient, TScan},
     hbase_thrift::{
@@ -79,29 +79,27 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct HBaseConnection {
     address: String,
     // timeout: Option<Duration>,
+    namespace: Option<String>,
 }
 
 impl HBaseConnection {
     pub async fn new(
         address: &str,
-        _read_only: bool,
-        _timeout: Option<Duration>,
+        namespace: Option<&str>,
     ) -> Result<Self> {
         debug!("Creating HBase connection instance");
 
         Ok(Self {
             address: address.to_string(),
-            // timeout,
+            namespace: namespace.map(|ns| ns.to_string()),
         })
     }
 
     pub fn client(&self) -> HBase {
         let mut channel = TTcpChannel::new();
-
         channel.open(self.address.clone()).unwrap();
 
         let (input_chan, output_chan) = channel.split().unwrap();
-
         let input_prot = TBinaryInputProtocol::new(TBufferedReadTransport::new(input_chan), true);
         let output_prot = TBinaryOutputProtocol::new(TBufferedWriteTransport::new(output_chan), true);
 
@@ -109,7 +107,7 @@ impl HBaseConnection {
 
         HBase {
             client,
-            // timeout: self.timeout,
+            namespace: self.namespace.clone(),
         }
     }
 
@@ -150,9 +148,18 @@ type OutputProtocol = TBinaryOutputProtocol<TBufferedWriteTransport<thrift::tran
 pub struct HBase {
     client: HbaseSyncClient<InputProtocol, OutputProtocol>,
     // timeout: Option<Duration>,
+    namespace: Option<String>,
 }
 
 impl HBase {
+    fn qualified_table_name(&self, table_name: &str) -> String {
+        if let Some(namespace) = &self.namespace {
+            format!("{}:{}", namespace, table_name)
+        } else {
+            table_name.to_string()
+        }
+    }
+
     /// Get `table` row keys in lexical order.
     ///
     /// If `start_at` is provided, the row key listing will start with key.
@@ -175,6 +182,8 @@ impl HBase {
 
         debug!("Trying to get row keys in range {:?} - {:?} with limit {:?}", start_at, end_at, rows_limit);
 
+        let qualified_name = self.qualified_table_name(table_name);
+
         let mut scan = TScan::default();
         scan.start_row = start_at.map(|start_key| {
             start_key.into_bytes()
@@ -190,9 +199,9 @@ impl HBase {
         scan.filter_string = Some(b"KeyOnlyFilter()".to_vec());
 
         let scan_id = self.client.scanner_open_with_scan(
-            table_name.as_bytes().to_vec(),
+            qualified_name.as_bytes().to_vec(),
             scan,
-            BTreeMap::new()
+            BTreeMap::new(),
         )?;
 
         let mut results: Vec<(RowKey, RowData)> = Vec::new();
@@ -254,6 +263,8 @@ impl HBase {
 
         debug!("Trying to get rows in range {:?} - {:?} with limit {:?}", start_at, end_at, rows_limit);
 
+        let qualified_name = self.qualified_table_name(table_name);
+
         let mut scan = TScan::default();
 
         scan.start_row = start_at.map(|start_key| {
@@ -269,9 +280,9 @@ impl HBase {
         scan.filter_string = Some(b"ColumnPaginationFilter(1,0)".to_vec());
 
         let scan_id = self.client.scanner_open_with_scan(
-            table_name.as_bytes().to_vec(),
+            qualified_name.as_bytes().to_vec(),
             scan,
-            BTreeMap::new()
+            BTreeMap::new(),
         )?;
         // ).unwrap_or_else(|err| {
         //     println!("scanner_open_with_scan error: {:?}", err);
@@ -326,11 +337,13 @@ impl HBase {
     ) -> Result<RowData> {
         debug!("Trying to get row data with key {:?} from table {:?}", row_key, table_name);
 
+        let qualified_name = self.qualified_table_name(table_name);
+
         let row_result = self.client.get_row_with_columns(
-            table_name.as_bytes().to_vec(),
+            qualified_name.as_bytes().to_vec(),
             row_key.as_bytes().to_vec(),
-            vec![b"x".to_vec()],
-            BTreeMap::new()
+            vec!["x".as_bytes().to_vec()],
+            BTreeMap::new(),
         )?;
 
         let first_row_result = &row_result.into_iter()

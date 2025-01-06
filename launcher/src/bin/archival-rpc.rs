@@ -100,6 +100,15 @@ fn main() {
     let rpc_hbase_config = Some(RpcHBaseConfig {
         enable_hbase_ledger_upload: false,
         hbase_address: value_t_or_exit!(matches, "rpc_hbase_address", String),
+        namespace: if matches.is_present("hbase_namespace") {
+            Some(value_t_or_exit!(
+                matches,
+                "hbase_namespace",
+                String
+            ))
+        } else {
+            None
+        },
         fallback_hbase_address: if matches.is_present("fallback_hbase_address") {
             Some(value_t_or_exit!(
                 matches,

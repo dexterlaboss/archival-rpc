@@ -46,22 +46,6 @@ pub fn renice_this_thread(adjustment: i8) -> Result<(), String> {
     }
 }
 
-/// Adds `adjustment` to the nice value of calling thread. Negative `adjustment` increases priority,
-/// positive `adjustment` decreases priority. New thread inherits nice value from current thread
-/// when created.
-///
-/// Fails on non-Linux systems for all `adjustment` values except of zero.
-#[cfg(not(target_os = "linux"))]
-pub fn renice_this_thread(adjustment: i8) -> Result<(), String> {
-    if adjustment == 0 {
-        Ok(())
-    } else {
-        Err(String::from(
-            "Failed to change thread's nice value: only supported on Linux",
-        ))
-    }
-}
-
 /// Check whether the nice value can be changed by `adjustment`.
 #[cfg(target_os = "linux")]
 pub fn is_renice_allowed(adjustment: i8) -> bool {

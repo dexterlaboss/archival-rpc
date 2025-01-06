@@ -92,6 +92,7 @@ pub struct LedgerStorageConfig {
     pub read_only: bool,
     pub timeout: Option<std::time::Duration>,
     pub address: String,
+    pub namespace: Option<String>,
     pub block_cache: Option<NonZeroUsize>,
     pub use_md5_row_key_salt: bool,
     pub enable_full_tx_cache: bool,
@@ -105,6 +106,7 @@ impl Default for LedgerStorageConfig {
             read_only: true,
             timeout: None,
             address: DEFAULT_ADDRESS.to_string(),
+            namespace: None,
             block_cache: None,
             use_md5_row_key_salt: false,
             enable_full_tx_cache: false,
@@ -117,6 +119,7 @@ impl Default for LedgerStorageConfig {
 #[derive(Clone)]
 pub struct LedgerStorage {
     connection: hbase::HBaseConnection,
+    // namespace: Option<String>,
     cache: Option<Cache<Slot, RowData>>,
     use_md5_row_key_salt: bool,
     cache_client: Option<MemcacheClient>,
@@ -141,9 +144,10 @@ impl LedgerStorage {
     pub async fn new_with_config(config: LedgerStorageConfig, metrics: Arc<Metrics>) -> Result<Self> {
         debug!("Creating ledger storage instance with config: {:?}", config);
         let LedgerStorageConfig {
-            read_only,
-            timeout,
+            read_only: _,
+            timeout: _,
             address,
+            namespace,
             block_cache,
             use_md5_row_key_salt,
             enable_full_tx_cache,
@@ -152,8 +156,9 @@ impl LedgerStorage {
         } = config;
         let connection = hbase::HBaseConnection::new(
             address.as_str(),
-            read_only,
-            timeout,
+            namespace.as_deref(),
+            // read_only,
+            // timeout,
         )
             .await?;
 
@@ -192,6 +197,7 @@ impl LedgerStorage {
 
         Ok(Self {
             connection,
+            // namespace,
             cache,
             use_md5_row_key_salt,
             cache_client,

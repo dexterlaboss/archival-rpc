@@ -183,6 +183,13 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .help("Address of fallback HBase instance to use"),
         )
         .arg(
+            Arg::with_name("hbase_namespace")
+                .long("hbase-namespace")
+                .value_name("NAMESPACE")
+                .takes_value(true)
+                .help("Namespace to use for HBase tables"),
+        )
+        .arg(
             Arg::with_name("rpc_hbase_timeout")
                 .long("rpc-hbase-timeout")
                 .value_name("SECONDS")

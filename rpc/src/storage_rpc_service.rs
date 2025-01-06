@@ -241,6 +241,7 @@ impl JsonRpcService {
             if let Some(RpcHBaseConfig {
                             enable_hbase_ledger_upload: false,
                             ref hbase_address,
+                            ref namespace,
                             timeout,
                             block_cache,
                             use_md5_row_key_salt,
@@ -254,6 +255,7 @@ impl JsonRpcService {
                     read_only: true,
                     timeout,
                     address: hbase_address.clone(),
+                    namespace: namespace.clone(),
                     block_cache,
                     use_md5_row_key_salt,
                     enable_full_tx_cache,
@@ -278,6 +280,7 @@ impl JsonRpcService {
             if let Some(RpcHBaseConfig {
                             enable_hbase_ledger_upload: false,
                             ref fallback_hbase_address,
+                            ref namespace,
                             timeout,
                             block_cache,
                             use_md5_row_key_salt,
@@ -291,6 +294,7 @@ impl JsonRpcService {
                         read_only: true,
                         timeout,
                         address: fallback_address.clone(),
+                        namespace: namespace.clone(),
                         block_cache,
                         use_md5_row_key_salt,
                         enable_full_tx_cache,

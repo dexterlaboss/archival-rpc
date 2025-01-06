@@ -162,6 +162,7 @@ impl JsonRpcConfig {
 pub struct RpcHBaseConfig {
     pub enable_hbase_ledger_upload: bool,
     pub hbase_address: String,
+    pub namespace: Option<String>,
     pub fallback_hbase_address: Option<String>,
     pub timeout: Option<Duration>,
     pub block_cache: Option<NonZeroUsize>,
@@ -177,6 +178,7 @@ impl Default for RpcHBaseConfig {
         Self {
             enable_hbase_ledger_upload: false,
             hbase_address,
+            namespace: None,
             fallback_hbase_address: None,
             timeout: None,
             block_cache: None,

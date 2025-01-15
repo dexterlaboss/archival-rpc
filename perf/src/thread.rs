@@ -1,3 +1,5 @@
+use log::warn;
+
 /// Wrapper for `nice(3)`.
 #[cfg(target_os = "linux")]
 fn nice(adjustment: i8) -> Result<i8, nix::errno::Errno> {

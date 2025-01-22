@@ -299,6 +299,12 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .help("Enable md5 row key salt for block HBase keys."),
         )
         .arg(
+            Arg::with_name("hash_tx_full_row_keys")
+                .long("hash-tx-full-row-keys")
+                .takes_value(false)
+                .help("Enable tx_full table key hashing"),
+        )
+        .arg(
             Arg::with_name("enable_full_tx_cache")
                 .long("enable-full-tx-cache")
                 .takes_value(false)

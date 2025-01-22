@@ -129,6 +129,7 @@ fn main() {
             None
         },
         use_md5_row_key_salt: matches.is_present("use_md5_row_key_salt"),
+        hash_tx_full_row_keys: matches.is_present("hash_tx_full_row_keys"),
         enable_full_tx_cache: matches.is_present("enable_full_tx_cache"),
         disable_tx_fallback: matches.is_present("disable_tx_fallback"),
         cache_address: if matches.is_present("cache_address") {

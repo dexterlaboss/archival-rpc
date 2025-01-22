@@ -29,6 +29,10 @@ use {
     },
     thiserror::Error,
     tokio::task::JoinError,
+    xxhash_rust::{
+        xxh3::{xxh3_128},
+        xxh32::{xxh32},
+    },
 };
 
 #[macro_use]
@@ -101,6 +105,19 @@ pub fn key_to_slot(key: &str) -> Option<Slot> {
             warn!("Failed to parse object key as a slot: {}: {}", key, err);
             None
         }
+    }
+}
+
+pub fn signature_to_tx_full_key(signature: &Signature, use_hash: bool) -> String {
+    if use_hash {
+        let signature_bytes = signature.as_ref(); // Convert signature to bytes
+        let hash_128 = xxh3_128(signature_bytes);
+        let hash_32 = xxh32(signature_bytes, 0);
+
+        // Concatenate the two hashes for a 160bit hash
+        format!("{:x}{:x}", hash_128, hash_32)
+    } else {
+        signature.to_string()
     }
 }
 

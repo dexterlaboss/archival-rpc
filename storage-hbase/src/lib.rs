@@ -44,6 +44,7 @@ use {
         slot_to_blocks_key,
         slot_to_tx_by_addr_key,
         key_to_slot,
+        signature_to_tx_full_key,
         compression::{decompress},
     },
     moka::sync::Cache,
@@ -95,6 +96,7 @@ pub struct LedgerStorageConfig {
     pub namespace: Option<String>,
     pub block_cache: Option<NonZeroUsize>,
     pub use_md5_row_key_salt: bool,
+    pub hash_tx_full_row_keys: bool,
     pub enable_full_tx_cache: bool,
     pub disable_tx_fallback: bool,
     pub cache_address: Option<String>,
@@ -109,6 +111,7 @@ impl Default for LedgerStorageConfig {
             namespace: None,
             block_cache: None,
             use_md5_row_key_salt: false,
+            hash_tx_full_row_keys: false,
             enable_full_tx_cache: false,
             disable_tx_fallback: false,
             cache_address: Some(DEFAULT_ADDRESS.to_string()),
@@ -122,6 +125,7 @@ pub struct LedgerStorage {
     // namespace: Option<String>,
     cache: Option<Cache<Slot, RowData>>,
     use_md5_row_key_salt: bool,
+    hash_tx_full_row_keys: bool,
     cache_client: Option<MemcacheClient>,
     disable_tx_fallback: bool,
     metrics: Arc<Metrics>,
@@ -150,6 +154,7 @@ impl LedgerStorage {
             namespace,
             block_cache,
             use_md5_row_key_salt,
+            hash_tx_full_row_keys,
             enable_full_tx_cache,
             disable_tx_fallback,
             cache_address,
@@ -200,6 +205,7 @@ impl LedgerStorage {
             // namespace,
             cache,
             use_md5_row_key_salt,
+            hash_tx_full_row_keys,
             cache_client,
             disable_tx_fallback,
             metrics,
@@ -383,7 +389,7 @@ impl LedgerStorageAdapter for LedgerStorage {
         let tx_cell_data = hbase
             .get_protobuf_or_bincode_cell::<StoredConfirmedTransactionWithStatusMeta, generated::ConfirmedTransactionWithStatusMeta>(
                 "tx_full",
-                signature.to_string(),
+                signature_to_tx_full_key(signature, self.hash_tx_full_row_keys),
             )
             .await
             .map_err(|err| match err {
@@ -416,7 +422,11 @@ impl LedgerStorageAdapter for LedgerStorage {
         let epoch: u64;
 
         if let Some(cache_client) = &self.cache_client {
-            match get_cached_transaction::<generated::ConfirmedTransactionWithStatusMeta>(cache_client, signature).await {
+            match get_cached_transaction::<generated::ConfirmedTransactionWithStatusMeta>(
+                cache_client,
+                signature,
+                self.hash_tx_full_row_keys
+            ).await {
                 Ok(Some(tx)) => {
                     let confirmed_tx: ConfirmedTransactionWithStatusMeta = match tx.try_into() {
                         Ok(val) => val,
@@ -845,11 +855,12 @@ impl LedgerStorageAdapter for LedgerStorage {
 async fn get_cached_transaction<P>(
     cache_client: &MemcacheClient,
     signature: &Signature,
+    use_hash_key: bool,
 ) -> Result<Option<P>>
     where
         P: prost::Message + Default
 {
-    let key = signature.to_string();
+    let key = signature_to_tx_full_key(signature, use_hash_key);
     let key_clone = key.clone();
     let cache_client_clone = cache_client.clone();
 

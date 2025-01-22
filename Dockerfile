@@ -4,8 +4,8 @@ FROM debian:buster-slim
 RUN mkdir -p /solana
 WORKDIR /solana
 
-ARG AMD64_BINARY
-ARG ARM64_BINARY
+#ARG AMD64_BINARY
+#ARG ARM64_BINARY
 ARG TARGETARCH
 
 COPY output/linux/${TARGETARCH}/archival-rpc /solana/archival-rpc

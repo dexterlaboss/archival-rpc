@@ -1,5 +1,5 @@
 
-FROM debian:buster-slim
+FROM debian:bookworm-slim
 
 RUN mkdir -p /solana
 WORKDIR /solana

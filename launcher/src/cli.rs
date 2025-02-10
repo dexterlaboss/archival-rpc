@@ -276,14 +276,14 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .hidden(true)
                 .help("The maximum get_blocks range limit"),
         )
-        .arg(
-            Arg::with_name("block_cache")
-                .long("block-cache")
-                .value_name("SIZE")
-                .takes_value(true)
-                .validator(is_parsable::<NonZeroUsize>)
-                .help("HBase storage block cache size"),
-        )
+        // .arg(
+        //     Arg::with_name("block_cache")
+        //         .long("block-cache")
+        //         .value_name("SIZE")
+        //         .takes_value(true)
+        //         .validator(is_parsable::<NonZeroUsize>)
+        //         .help("HBase storage block cache size"),
+        // )
         .arg(
             Arg::with_name("log_messages_bytes_limit")
                 .long("log-messages-bytes-limit")
@@ -335,7 +335,7 @@ pub struct DefaultStorageRpcArgs {
     pub rpc_bigtable_timeout: String,
     pub rpc_bigtable_instance_name: String,
     pub rpc_bigtable_app_profile_id: String,
-    pub block_cache: Option<NonZeroUsize>,
+    // pub block_cache: Option<NonZeroUsize>,
     pub max_get_blocks_range: Option<u64>,
 }
 
@@ -351,7 +351,7 @@ impl DefaultStorageRpcArgs {
             rpc_bigtable_instance_name: solana_storage_bigtable::DEFAULT_INSTANCE_NAME.to_string(),
             rpc_bigtable_app_profile_id: solana_storage_bigtable::DEFAULT_APP_PROFILE_ID
                 .to_string(),
-            block_cache: None,
+            // block_cache: None,
             max_get_blocks_range: None,
         }
     }

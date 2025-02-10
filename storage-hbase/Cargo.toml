@@ -40,7 +40,7 @@ thiserror = "1.0"
 tokio = "1"
 tonic = { version = "0.8.0", features = ["tls", "transport"] }
 
-moka = { version = "0.12.7", features = ["sync"] }
+#moka = { version = "0.12.7", features = ["sync"] }
 
 # openssl is a dependency of the goauth and smpl_jwt crates, but explicitly
 # declare it here as well to activate the "vendored" feature that builds OpenSSL

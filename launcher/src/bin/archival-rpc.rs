@@ -119,15 +119,15 @@ fn main() {
             None
         },
         timeout: None,
-        block_cache: if matches.is_present("block_cache") {
-            Some(value_t_or_exit!(
-                matches,
-                "block_cache",
-                NonZeroUsize
-            ))
-        } else {
-            None
-        },
+        // block_cache: if matches.is_present("block_cache") {
+        //     Some(value_t_or_exit!(
+        //         matches,
+        //         "block_cache",
+        //         NonZeroUsize
+        //     ))
+        // } else {
+        //     None
+        // },
         use_md5_row_key_salt: matches.is_present("use_md5_row_key_salt"),
         hash_tx_full_row_keys: matches.is_present("hash_tx_full_row_keys"),
         enable_full_tx_cache: matches.is_present("enable_full_tx_cache"),

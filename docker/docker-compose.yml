@@ -1,0 +1,163 @@
+# docker/docker-compose.yml
+
+#version: '3.8'
+
+services:
+  hbase:
+    build:
+      context: .
+      dockerfile: Dockerfile.hbase
+    container_name: hbase
+    ports:
+      - "16000:16000"  # HBase Master port
+      - "16010:16010"  # HBase REST API
+      - "16020:16020"  # Region server
+      - "16030:16030"  # HBase Admin UI
+      - "9090:9090"    # Thrift port
+      - "2181:2181"    # Embedded Zookeeper port
+#    volumes:
+#      - hbase-data:/data/hbase
+#      - hbase-zookeeper-data:/data/zookeeper
+#    environment:
+#      - HBASE_CONF_DIR=/opt/hbase/conf
+#      - EXTRA_OPTS="-Dhbase.zookeeper.quorum=localhost"
+#      - HBASE_MANAGES_ZK=false
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "16010"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  kafka-zookeeper:
+    image: 'confluentinc/cp-zookeeper:7.3.1'
+    container_name: kafka-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - '2182:2181'
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "echo", "ruok", "|", "nc", "localhost", "2181", "|", "grep", "imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: 'confluentinc/cp-kafka:7.3.1'
+    container_name: kafka
+    depends_on:
+      - kafka-zookeeper
+    ports:
+      - '9092:9092'
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'kafka-zookeeper:2181'
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "/usr/bin/kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka-init:
+    image: 'confluentinc/cp-kafka:7.3.1'
+    container_name: kafka-init
+    depends_on:
+      - kafka
+    entrypoint:
+      - /bin/bash
+      - -c
+      - >
+        echo "Checking and creating Kafka topics.";
+        if /usr/bin/kafka-topics --list --bootstrap-server kafka:9092 | grep -q "^sol.blocks$"; then
+          echo "Topic 'sol.blocks' already exists.";
+        else
+          /usr/bin/kafka-topics --create --topic sol.blocks --bootstrap-server kafka:9092 --partitions 1 --replication-factor 1 || {
+            echo "Failed to create topic 'sol.blocks'!";
+            exit 1;
+          }
+          echo "Topic 'sol.blocks' created successfully.";
+        fi;
+        echo "Kafka topic initialization completed."
+    networks:
+      - app-network
+    restart: "no"
+
+  # Setup Service
+#  setup:
+#    build:
+#      context: .
+#      dockerfile: Dockerfile.setup
+#    container_name: setup
+#    depends_on:
+#      kafka:
+#        condition: service_healthy
+#    networks:
+#      - app-network
+#    environment:
+#      - HBASE_CONF_DIR=/scripts/conf
+#    entrypoint: ["/scripts/setup.sh"]
+#    healthcheck:
+#      test: ["CMD", "hbase", "shell", "-e", "status"]
+#      interval: 30s
+#      timeout: 10s
+#      retries: 5
+
+  # Archival RPC
+  archival-rpc:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.archival-rpc
+    container_name: archival-rpc
+    depends_on:
+#      setup:
+#        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+      hbase:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - app-network
+#    entrypoint: ["/usr/local/bin/archival-rpc"]
+    restart: unless-stopped
+
+  # CAR generator
+  car-gen:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.car-gen
+    container_name: car-gen
+    depends_on:
+#      setup:
+#        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+      hbase:
+        condition: service_healthy
+    environment:
+      - HADOOP_ROOT_LOGGER=INFO,console
+    networks:
+      - app-network
+    entrypoint: ["/usr/local/bin/car-gen"]
+#    entrypoint: ["ping", "10.0.68.184"]
+    restart: unless-stopped
+
+networks:
+  app-network:
+    driver: bridge
+
+#volumes:
+#  hbase-data:
+#  hbase-zookeeper-data:
+#  kafka-zookeeper-data:
+#  kafka-data:

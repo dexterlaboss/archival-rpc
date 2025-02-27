@@ -1,0 +1,41 @@
+FROM rust:1.83-slim-bullseye AS build
+
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y --no-install-recommends \
+    apt-utils \
+    software-properties-common \
+    cmake \
+    build-essential \
+    libclang-dev \
+    libudev-dev \
+    libssl-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+
+RUN USER=root cargo new --bin solana
+WORKDIR /solana
+
+COPY . /solana
+
+RUN cargo build --release
+
+
+FROM rust:1.83-slim-bullseye
+
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y \
+    curl \
+    && apt-get update \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /usr/local/bin
+
+COPY --from=build /solana/target/release/archival-rpc .
+#COPY docker/config/.env.test ./.env
+
+RUN chmod +x archival-rpc
+
+ENV RUST_LOG=debug
+ENV RUST_BACKTRACE=1
+
+ENTRYPOINT ["./archival-rpc", "--bind-address=0.0.0.0", "--enable-rpc-hbase-ledger-storage", "--rpc-hbase-address=hbase:9090", "--hdfs-url=hdfs://51.158.61.150:8020/", "--hdfs-path=/chain-archives/sol/car_test"]

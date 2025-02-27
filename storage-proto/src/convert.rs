@@ -1,5 +1,6 @@
+use solana_sdk::clock::UnixTimestamp;
 use {
-    crate::{StoredExtendedRewards, StoredTransactionStatusMeta},
+    crate::{StoredExtendedRewards, StoredTransactionStatusMeta, StoredCarIndexEntry},
     solana_account_decoder::parse_token::{real_number_string_trimmed, UiTokenAmount},
     solana_sdk::{
         hash::Hash,
@@ -42,6 +43,14 @@ pub mod tx_by_addr {
         "/solana.storage.transaction_by_addr.rs"
     ));
     // include!("../proto/solana.storage.transaction_by_addr.rs");
+}
+
+#[allow(clippy::derive_partial_eq_without_eq)]
+pub mod car_index {
+    include!(concat!(
+    env!("OUT_DIR"),
+    "/solana.storage.car_index_entry.rs"
+    ));
 }
 
 impl From<Vec<Reward>> for generated::Rewards {
@@ -1917,5 +1926,41 @@ mod test {
                 }
             }
         }
+    }
+}
+
+impl TryFrom<car_index::CarIndexEntry> for StoredCarIndexEntry {
+    type Error = bincode::Error;
+    fn try_from(
+        index_entry: car_index::CarIndexEntry,
+    ) -> std::result::Result<Self, Self::Error> {
+        let car_index::CarIndexEntry {
+            slot,
+            block_hash,
+            offset,
+            length,
+            start_slot,
+            end_slot,
+            timestamp,
+            previous_block_hash,
+            block_height,
+            block_time,
+        } = index_entry;
+
+        Ok(Self {
+            slot,
+            block_hash,
+            offset,
+            length,
+            start_slot,
+            end_slot,
+            // timestamp: timestamp.into(),
+            timestamp: timestamp
+                .map(|car_index::UnixTimestamp { timestamp }| timestamp)
+                .unwrap_or_default(),
+            previous_block_hash,
+            block_height: block_height.map(|car_index::BlockHeight { block_height }| block_height),
+            block_time: block_time.map(|car_index::UnixTimestamp { timestamp }| timestamp),
+        })
     }
 }

@@ -1,4 +1,6 @@
-
+use std::format;
+use std::time::{Duration, Instant};
+use log::{debug, error};
 use {
     async_trait::async_trait,
     log::*,
@@ -140,6 +142,7 @@ pub struct StoredConfirmedBlock {
     #[serde(deserialize_with = "default_on_eof")]
     block_height: Option<u64>,
 }
+
 
 #[derive(Serialize, Deserialize)]
 pub struct StoredConfirmedTransactionWithStatusMeta {
@@ -459,6 +462,9 @@ pub trait LedgerStorageAdapter: Send + Sync {
     ) -> Result<()>;
 
     fn clone_box(&self) -> Box<dyn LedgerStorageAdapter>;
+
+    /// Fetch the confirmed block from the desired slot
+    async fn get_confirmed_block_from_legacy_storage(&self, slot: Slot, _use_cache: bool) -> Result<ConfirmedBlock>;
 }
 
 #[cfg(test)]

@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package solana.storage.CarIndexEntry;
+
+message CarIndexEntry {
+  uint64 slot = 1;
+  string block_hash = 2;
+  uint64 offset = 3;
+  uint64 length = 4;
+  uint64 start_slot = 5;
+  uint64 end_slot = 6;
+  UnixTimestamp timestamp = 7;
+  string previous_block_hash = 8;
+  BlockHeight block_height = 9;
+  UnixTimestamp block_time = 10;
+}
+
+message UnixTimestamp {
+  int64 timestamp = 1;
+}
+
+message BlockHeight {
+  uint64 block_height = 1;
+}

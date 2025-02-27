@@ -109,6 +109,26 @@ fn main() {
         } else {
             None
         },
+        hdfs_url: value_t_or_exit!(matches, "hdfs_url", String),
+        hdfs_path: value_t_or_exit!(matches, "hdfs_path", String),
+        // hdfs_url: if matches.is_present("hdfs_url") {
+        //     Some(value_t_or_exit!(
+        //         matches,
+        //         "hdfs_url",
+        //         String
+        //     ))
+        // } else {
+        //     None
+        // },
+        // hdfs_path: if matches.is_present("hdfs_path") {
+        //     Some(value_t_or_exit!(
+        //         matches,
+        //         "hdfs_path",
+        //         String
+        //     ))
+        // } else {
+        //     None
+        // },
         fallback_hbase_address: if matches.is_present("fallback_hbase_address") {
             Some(value_t_or_exit!(
                 matches,

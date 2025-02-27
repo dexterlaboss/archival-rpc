@@ -47,6 +47,9 @@ use {
 use std::future::Future;
 use futures::future::{Either, FutureExt, BoxFuture};
 use std::panic::AssertUnwindSafe;
+use hyper::{body::to_bytes, Request, Body, StatusCode};
+use futures::stream::{self, StreamExt};
+use serde_json::Value;
 
 #[derive(Clone)]
 struct MetricsMiddleware {
@@ -68,6 +71,7 @@ impl<M: Metadata> Middleware<M> for MetricsMiddleware {
             F: FnOnce(Call, M) -> X + Send + Sync,
             X: Future<Output = Option<Output>> + Send + 'static,
     {
+        info!("Request on_call executed");
         if let Call::MethodCall(ref request) = call {
             let method = request.method.clone();
             let metrics = self.metrics.clone();
@@ -171,23 +175,61 @@ impl RpcRequestMiddleware {
 }
 
 impl RequestMiddleware for RpcRequestMiddleware {
-    fn on_request(&self, request: hyper::Request<hyper::Body>) -> RequestMiddlewareAction {
+    fn on_request(&self, request: Request<Body>) -> RequestMiddlewareAction {
         trace!("request uri: {}", request.uri());
 
         if let Some(result) = process_rest(request.uri().path()) {
             hyper::Response::builder()
-                .status(hyper::StatusCode::OK)
-                .body(hyper::Body::from(result))
+                .status(StatusCode::OK)
+                .body(Body::from(result))
                 .unwrap()
                 .into()
         } else if request.uri().path() == "/health" {
             hyper::Response::builder()
-                .status(hyper::StatusCode::OK)
-                .body(hyper::Body::from(self.health_check()))
+                .status(StatusCode::OK)
+                .body(Body::from(self.health_check()))
                 .unwrap()
                 .into()
         } else {
             request.into()
+        }
+
+        //
+        // This gets the number of requests in a batch.
+        //
+
+        // let (parts, body) = request.into_parts();
+        //
+        // let body_bytes_future = async {
+        //     match to_bytes(body).await {
+        //         Ok(bytes) => {
+        //             let count = count_jsonrpc_requests(&bytes);
+        //             debug!("Received JSON-RPC batch size: {}", count);
+        //             bytes
+        //         }
+        //         Err(e) => {
+        //             error!("Error reading body: {}", e);
+        //             hyper::body::Bytes::new()
+        //         }
+        //     }
+        // };
+        //
+        // let new_body = Body::wrap_stream(
+        //     stream::once(body_bytes_future)
+        //         .map(|bytes| Ok::<_, hyper::Error>(bytes))
+        // );
+        //
+        // Request::from_parts(parts, new_body).into()
+    }
+}
+
+fn count_jsonrpc_requests(body: &hyper::body::Bytes) -> usize {
+    match serde_json::from_slice::<Value>(body) {
+        Ok(Value::Array(batch)) => batch.len(),  // JSON-RPC batch request
+        Ok(_) => 1,  // Single JSON-RPC request
+        Err(_) => {
+            error!("Failed to parse JSON-RPC request");
+            0  // Invalid JSON
         }
     }
 }
@@ -242,6 +284,8 @@ impl JsonRpcService {
                             enable_hbase_ledger_upload: false,
                             ref hbase_address,
                             ref namespace,
+                            ref hdfs_url,
+                            ref hdfs_path,
                             timeout,
                             // block_cache,
                             use_md5_row_key_salt,
@@ -257,6 +301,8 @@ impl JsonRpcService {
                     timeout,
                     address: hbase_address.clone(),
                     namespace: namespace.clone(),
+                    hdfs_url: hdfs_url.clone(),
+                    hdfs_path: hdfs_path.clone(),
                     // block_cache,
                     use_md5_row_key_salt,
                     hash_tx_full_row_keys,
@@ -283,6 +329,8 @@ impl JsonRpcService {
                             enable_hbase_ledger_upload: false,
                             ref fallback_hbase_address,
                             ref namespace,
+                            ref hdfs_url,
+                            ref hdfs_path,
                             timeout,
                             // block_cache,
                             use_md5_row_key_salt,
@@ -298,6 +346,8 @@ impl JsonRpcService {
                         timeout,
                         address: fallback_address.clone(),
                         namespace: namespace.clone(),
+                        hdfs_url: hdfs_url.clone(),
+                        hdfs_path: hdfs_path.clone(),
                         // block_cache,
                         use_md5_row_key_salt,
                         hash_tx_full_row_keys,

@@ -163,6 +163,8 @@ pub struct RpcHBaseConfig {
     pub enable_hbase_ledger_upload: bool,
     pub hbase_address: String,
     pub namespace: Option<String>,
+    pub hdfs_url: String,
+    pub hdfs_path: String,
     pub fallback_hbase_address: Option<String>,
     pub timeout: Option<Duration>,
     // pub block_cache: Option<NonZeroUsize>,
@@ -176,10 +178,14 @@ pub struct RpcHBaseConfig {
 impl Default for RpcHBaseConfig {
     fn default() -> Self {
         let hbase_address = solana_storage_hbase::DEFAULT_ADDRESS.to_string();
+        let hdfs_url = solana_storage_hbase::DEFAULT_HDFS_URL.to_string();
+        let hdfs_path = solana_storage_hbase::DEFAULT_HDFS_PATH.to_string();
         Self {
             enable_hbase_ledger_upload: false,
             hbase_address,
             namespace: None,
+            hdfs_url,
+            hdfs_path,
             fallback_hbase_address: None,
             timeout: None,
             // block_cache: None,

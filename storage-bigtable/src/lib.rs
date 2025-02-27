@@ -823,6 +823,11 @@ impl LedgerStorageAdapter for LedgerStorage {
     fn clone_box(&self) -> Box<dyn LedgerStorageAdapter> {
         Box::new(self.clone())
     }
+
+    async fn get_confirmed_block_from_legacy_storage(&self, slot: Slot, _use_cache: bool) -> Result<ConfirmedBlock> {
+        // Placeholder implementation
+        Err(Error::BlockNotFound(slot))
+    }
 }
 
 #[cfg(test)]

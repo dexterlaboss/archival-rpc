@@ -6,7 +6,7 @@
 
 /config/
 
-/target/
+/tmp/
 
 .cache
 

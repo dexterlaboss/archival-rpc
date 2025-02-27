@@ -95,19 +95,47 @@ impl HBaseConnection {
         })
     }
 
+    // pub fn client(&self) -> HBase {
+    //     let mut channel = TTcpChannel::new();
+    //     channel.open(self.address.clone()).unwrap();
+    //
+    //     let (input_chan, output_chan) = channel.split().unwrap();
+    //     let input_prot = TBinaryInputProtocol::new(TBufferedReadTransport::new(input_chan), true);
+    //     let output_prot = TBinaryOutputProtocol::new(TBufferedWriteTransport::new(output_chan), true);
+    //
+    //     let client = HbaseSyncClient::new(input_prot, output_prot);
+    //
+    //     HBase {
+    //         client,
+    //         namespace: self.namespace.clone(),
+    //     }
+    // }
+
     pub fn client(&self) -> HBase {
         let mut channel = TTcpChannel::new();
+
         channel.open(self.address.clone()).unwrap();
 
         let (input_chan, output_chan) = channel.split().unwrap();
-        let input_prot = TBinaryInputProtocol::new(TBufferedReadTransport::new(input_chan), true);
-        let output_prot = TBinaryOutputProtocol::new(TBufferedWriteTransport::new(output_chan), true);
 
-        let client = HbaseSyncClient::new(input_prot, output_prot);
+        let input_prot = TBinaryInputProtocol::new(
+            TBufferedReadTransport::new(input_chan),
+            true
+        );
+        let output_prot = TBinaryOutputProtocol::new(
+            TBufferedWriteTransport::new(output_chan),
+            true
+        );
+
+        let client = HbaseSyncClient::new(
+            input_prot,
+            output_prot
+        );
 
         HBase {
             client,
             namespace: self.namespace.clone(),
+            // timeout: self.timeout,
         }
     }
 

@@ -1,3 +1,4 @@
+use solana_sdk::clock::UnixTimestamp;
 use {
     serde::{Deserialize, Serialize},
     solana_account_decoder::{
@@ -258,4 +259,18 @@ impl TryFrom<TransactionStatusMeta> for StoredTransactionStatusMeta {
             compute_units_consumed,
         })
     }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct StoredCarIndexEntry {
+    pub slot: u64,
+    pub block_hash: String,
+    pub offset: u64,
+    pub length: u64,
+    pub start_slot: u64,
+    pub end_slot: u64,
+    pub timestamp: UnixTimestamp,
+    pub previous_block_hash: String,
+    pub block_height: Option<u64>,
+    pub block_time: Option<UnixTimestamp>,
 }

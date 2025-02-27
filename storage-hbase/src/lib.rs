@@ -26,7 +26,10 @@ use {
             Transaction
         },
     },
-    solana_storage_proto::convert::{generated, tx_by_addr},
+    solana_storage_proto::{
+        StoredCarIndexEntry,
+        convert::{generated, tx_by_addr, car_index}
+    },
     solana_transaction_status::{
         extract_memos::extract_and_fmt_memos, ConfirmedBlock, ConfirmedTransactionStatusWithSignature,
         ConfirmedTransactionWithStatusMeta,
@@ -38,6 +41,7 @@ use {
     solana_storage_adapter::{
         Error, Result, LedgerStorageAdapter,
         StoredConfirmedBlock,
+        // StoredCarIndexEntry,
         StoredConfirmedTransactionWithStatusMeta,
         TransactionInfo,
         LegacyTransactionByAddrInfo,
@@ -61,6 +65,28 @@ use {
     memcache::Client as MemcacheClient,
     tokio::task,
 };
+use dexter_ipfs_car::reader::read_block_at_offset_reader;
+use log::{debug, warn};
+use chrono::{Utc, TimeZone, Datelike};  // <-- Datelike is critical
+use std::io::{Cursor, SeekFrom};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use prost::Message;
+
+use hdfs_native::{Client, file::FileReader};
+use tokio_util::io::StreamReader;
+use async_compression::tokio::bufread::GzipDecoder;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use bytes::Bytes;
+use futures::{Stream, TryStreamExt};
+use std::{pin::Pin};
+use std::panic;
+
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, ReadBuf};
+// use hdfs_native::FileReader;
+use futures::future::BoxFuture;
+use futures::Future;
+use std::sync::{Mutex};
 
 // #[macro_use]
 // extern crate solana_metrics;
@@ -85,8 +111,117 @@ impl From<CacheErrorWrapper> for Error {
     }
 }
 
+// pub struct HdfsFileReader {
+//     inner: Arc<Mutex<FileReader>>,
+//     read_future: Option<BoxFuture<'static, std::result::Result<bytes::Bytes, hdfs_native::HdfsError>>>,
+//     read_len: usize,
+// }
+//
+// impl HdfsFileReader {
+//     pub fn new(inner: FileReader, read_len: usize) -> Self {
+//         Self {
+//             inner: Arc::new(Mutex::new(inner)),
+//             read_future: None,
+//             read_len,
+//         }
+//     }
+// }
+//
+// impl AsyncRead for HdfsFileReader {
+//     fn poll_read(
+//         mut self: Pin<&mut Self>,
+//         cx: &mut Context<'_>,
+//         buf: &mut ReadBuf<'_>,
+//     ) -> Poll<std::io::Result<()>> {
+//         if self.read_future.is_none() {
+//             let len = buf.remaining().min(self.read_len);
+//             let inner = Arc::clone(&self.inner);
+//
+//             let read_future = async move {
+//                 let mut reader = inner.lock().unwrap();
+//                 reader.read(len).await
+//             };
+//             self.read_future = Some(Box::pin(read_future));
+//         }
+//
+//         match Pin::new(self.read_future.as_mut().unwrap()).poll(cx) {
+//             Poll::Ready(Ok(bytes)) => {
+//                 let amt = bytes.len().min(buf.remaining());
+//                 buf.put_slice(&bytes[..amt]);
+//                 self.read_future = None;
+//                 Poll::Ready(Ok(()))
+//             }
+//             Poll::Ready(Err(e)) => {
+//                 self.read_future = None;
+//                 Poll::Ready(Err(std::io::Error::new(
+//                     std::io::ErrorKind::Other,
+//                     format!("HDFS read error: {:?}", e),
+//                 )))
+//             }
+//             Poll::Pending => Poll::Pending,
+//         }
+//     }
+// }
+
 pub const DEFAULT_ADDRESS: &str = "127.0.0.1:9090";
 pub const DEFAULT_CACHE_ADDRESS: &str = "127.0.0.1:11211";
+
+pub const DEFAULT_HDFS_URL: &str = "127.0.0.1:8020";
+
+pub const DEFAULT_HDFS_PATH: &str = "/chain-archives/sol/blocks/car";
+
+
+// #[allow(clippy::derive_partial_eq_without_eq)]
+// #[derive(Clone, PartialEq, prost::Message)]
+// pub struct ProtoCarIndexEntry {
+//     #[prost(uint64, tag="1")]
+//     pub slot: u64,
+//
+//     #[prost(string, tag="2")]
+//     pub block_hash: ::prost::alloc::string::String,
+//
+//     #[prost(uint64, tag="3")]
+//     pub offset: u64,
+//
+//     #[prost(uint64, tag="4")]
+//     pub length: u64,
+//
+//     #[prost(uint64, tag="5")]
+//     pub start_slot: u64,
+//
+//     #[prost(uint64, tag="6")]
+//     pub end_slot: u64,
+//
+//     #[prost(uint64, tag="7")]
+//     pub timestamp: UnixTimestamp,
+//     // pub timestamp: u64,
+//
+//     #[prost(string, tag="8")]
+//     pub previous_block_hash: ::prost::alloc::string::String,
+//
+//     #[prost(string, tag="9")]
+//     pub block_height: ::core::option::Option<BlockHeight>,
+//
+//     #[prost(string, tag="10")]
+//     pub block_time: ::core::option::Option<UnixTimestamp>,
+// }
+//
+// #[allow(clippy::derive_partial_eq_without_eq)]
+// #[derive(Clone, PartialEq, ::prost::Message)]
+// pub struct UnixTimestamp {
+//     #[prost(int64, tag = "1")]
+//     pub timestamp: i64,
+// }
+// #[allow(clippy::derive_partial_eq_without_eq)]
+// #[derive(Clone, PartialEq, ::prost::Message)]
+// pub struct BlockHeight {
+//     #[prost(uint64, tag = "1")]
+//     pub block_height: u64,
+// }
+//
+
+
+
 
 #[derive(Debug)]
 pub struct LedgerStorageConfig {
@@ -94,6 +229,8 @@ pub struct LedgerStorageConfig {
     pub timeout: Option<std::time::Duration>,
     pub address: String,
     pub namespace: Option<String>,
+    pub hdfs_url: String,
+    pub hdfs_path: String,
     // pub block_cache: Option<NonZeroUsize>,
     pub use_md5_row_key_salt: bool,
     pub hash_tx_full_row_keys: bool,
@@ -109,6 +246,8 @@ impl Default for LedgerStorageConfig {
             timeout: None,
             address: DEFAULT_ADDRESS.to_string(),
             namespace: None,
+            hdfs_url: DEFAULT_HDFS_URL.to_string(),
+            hdfs_path: DEFAULT_HDFS_PATH.to_string(),
             // block_cache: None,
             use_md5_row_key_salt: false,
             hash_tx_full_row_keys: false,
@@ -122,6 +261,7 @@ impl Default for LedgerStorageConfig {
 #[derive(Clone)]
 pub struct LedgerStorage {
     connection: hbase::HBaseConnection,
+    hdfs_client: Arc<Client>,
     // namespace: Option<String>,
     // cache: Option<Cache<Slot, RowData>>,
     use_md5_row_key_salt: bool,
@@ -152,6 +292,8 @@ impl LedgerStorage {
             timeout: _,
             address,
             namespace,
+            hdfs_url,
+            hdfs_path,
             // block_cache,
             use_md5_row_key_salt,
             hash_tx_full_row_keys,
@@ -159,6 +301,7 @@ impl LedgerStorage {
             disable_tx_fallback,
             cache_address,
         } = config;
+
         let connection = hbase::HBaseConnection::new(
             address.as_str(),
             namespace.as_deref(),
@@ -167,6 +310,13 @@ impl LedgerStorage {
         )
             .await?;
 
+        let hdfs_client = Client::new(&hdfs_url)
+            .map_err(|e| {
+                Error::StorageBackendError(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to create HDFS client: {e}"),
+                )))
+            })?;
         let cache_client = if enable_full_tx_cache {
             if let Some(cache_addr) = cache_address {
                 let cache_addr = format!("memcache://{}?timeout=1&protocol=ascii", cache_addr);
@@ -202,6 +352,7 @@ impl LedgerStorage {
 
         Ok(Self {
             connection,
+            hdfs_client: Arc::new(hdfs_client),
             // namespace,
             // cache,
             use_md5_row_key_salt,
@@ -210,6 +361,34 @@ impl LedgerStorage {
             disable_tx_fallback,
             metrics,
         })
+    }
+
+    /// Example helper to regenerate the daily-partitioned path
+    /// (replicating your `DailyPartitionedPathStrategy` logic).
+    /// If you actually have a stored `car_path` field in `CarIndexEntry`,
+    /// you can skip this.
+    fn generate_car_path(&self, min_slot: u64, max_slot: u64, block_time: i64) -> Result<String> {
+        if block_time == 0 {
+            return Err(Error::StorageBackendError(Box::new(
+                hbase::Error::ObjectCorrupt(
+                    format!("block_time=0 for slots [{}..{}]", min_slot, max_slot)
+                )
+            )));
+        }
+        let dt = Utc.timestamp_opt(block_time, 0).single().ok_or_else(|| {
+            Error::StorageBackendError(Box::new(
+                hbase::Error::ObjectCorrupt(
+                    format!("invalid block_time={} for slots [{}..{}]", block_time, min_slot, max_slot)
+                )
+            ))
+        })?;
+
+        let base_path = "/chain-archives/sol/car_test";
+        let path = format!(
+            "{}/year={:04}/month={:02}/day={:02}/{}-{}.blocks.car",
+            base_path, dt.year(), dt.month(), dt.day(), min_slot, max_slot
+        );
+        Ok(path)
     }
 }
 
@@ -262,6 +441,133 @@ impl LedgerStorageAdapter for LedgerStorage {
 
     /// Fetch the confirmed block from the desired slot
     async fn get_confirmed_block(&self, slot: Slot, _use_cache: bool) -> Result<ConfirmedBlock> {
+        debug!("LedgerStorage::get_confirmed_block request received for slot={}", slot);
+
+        // 1) Load CarIndexEntry from HBase
+        let mut hbase = self.connection.client();
+
+        debug!("Fetching index data for slot {} from HBase", slot);
+        let index_cell_data = hbase
+            .get_protobuf_or_bincode_cell::<StoredCarIndexEntry, car_index::CarIndexEntry>(
+                "blocks_meta",
+                slot_to_blocks_key(slot, false),
+            )
+            .await
+            .map_err(|err| match err {
+                hbase::Error::RowNotFound => Error::BlockNotFound(slot),
+                other => Error::StorageBackendError(Box::new(other)),
+            })?;
+
+        let index_entry: StoredCarIndexEntry = match index_cell_data {
+            hbase::CellData::Bincode(entry) => entry.into(),
+            hbase::CellData::Protobuf(entry) => entry.try_into().map_err(|_err| {
+                error!("Protobuf object is corrupted for slot {}", slot);
+                hbase::Error::ObjectCorrupt(format!("blocks_meta/{}", slot_to_blocks_key(slot, false)))
+            })?,
+        };
+
+        debug!("Retrieved index entry: {:?}", index_entry);
+
+        // 2) Generate path to `.car` in HDFS
+        let car_path = self.generate_car_path(
+            index_entry.start_slot,
+            index_entry.end_slot,
+            index_entry.timestamp,
+        )?;
+
+        debug!("Generated CAR file path: {}", car_path);
+
+        let offset = index_entry.offset;
+        let length = index_entry.length;
+
+        // 3) Read from HDFS
+        debug!("Reading CAR file from HDFS at offset {} with length {}", offset, length);
+        let mut file = self.hdfs_client.read(&car_path).await.map_err(|e| {
+            error!("Failed to open CAR file on HDFS: {}", e);
+            Error::StorageBackendError(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to open CAR file on HDFS: {e}"),
+            )))
+        })?;
+
+        // Seek to the offset in the CAR file
+        if panic::catch_unwind(panic::AssertUnwindSafe(|| file.seek(offset as usize))).is_err() {
+            return Err(Error::StorageBackendError(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to seek to offset {}", offset),
+            ))));
+        }
+
+        debug!("Successfully sought to offset {}", offset);
+
+        // Read exactly `length` bytes from the file
+        let data = file.read(length as usize).await.map_err(|e| {
+            error!("Failed to read CAR data from HDFS: {}", e);
+            Error::StorageBackendError(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to read CAR data from HDFS: {e}"),
+            )))
+        })?;
+
+        debug!("Successfully read {} bytes from HDFS", data.len());
+
+        if data.len() < length as usize {
+            return Err(Error::StorageBackendError(Box::new(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!("Expected {length} bytes, but read only {}", data.len()),
+            ))));
+        }
+
+        // 4) Parse the block from the CAR data using `read_block_at_offset_reader`
+        let mut cursor = Cursor::new(data);
+        let (fetched_row_key, row_data) = read_block_at_offset_reader(&mut cursor, 0, length)
+            .map_err(|e| {
+                error!("Failed to read block from CAR file: {}", e);
+                Error::StorageBackendError(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                )))
+            })?;
+
+        debug!("Successfully parsed block data with row key: {:?}", fetched_row_key);
+
+        // 5) Decompress the actual block data
+        let decompressed = decompress(&row_data).map_err(|e| {
+            error!("Failed decompressing slot {}: {}", slot, e);
+            Error::StorageBackendError(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed decompressing slot {}: {}", slot, e),
+            )))
+        })?;
+
+        debug!("Successfully decompressed block data, size: {} bytes", decompressed.len());
+
+        // 6) Decode Protobuf `generated::ConfirmedBlock` and convert
+        let proto_block = generated::ConfirmedBlock::decode(&*decompressed).map_err(|e| {
+            error!("Protobuf decode error slot {}: {}", slot, e);
+            Error::StorageBackendError(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Protobuf decode error slot {}: {}", slot, e),
+            )))
+        })?;
+
+        debug!("Successfully decoded Protobuf ConfirmedBlock for slot {}", slot);
+
+        let confirmed_block: ConfirmedBlock = proto_block.try_into().map_err(|_err| {
+            error!("Protobuf object is corrupted for slot {}", slot);
+            Error::StorageBackendError(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Protobuf object is corrupted for slot {}", slot),
+            )))
+        })?;
+
+        debug!("Successfully converted ConfirmedBlock for slot {}", slot);
+
+        Ok(confirmed_block)
+    }
+
+
+    async fn get_confirmed_block_from_legacy_storage(&self, slot: Slot, _use_cache: bool) -> Result<ConfirmedBlock> {
         debug!(
             "LedgerStorage::get_confirmed_block request received: {:?}",
             slot

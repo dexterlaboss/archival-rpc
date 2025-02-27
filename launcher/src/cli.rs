@@ -190,6 +190,20 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .help("Namespace to use for HBase tables"),
         )
         .arg(
+            Arg::with_name("hdfs_url")
+                .long("hdfs-url")
+                .value_name("HDFS_URL")
+                .takes_value(true)
+                .help("Hdfs address to use"),
+        )
+        .arg(
+            Arg::with_name("hdfs_path")
+                .long("hdfs-path")
+                .value_name("HDFS_PATH")
+                .takes_value(true)
+                .help("Hdfs archive base path"),
+        )
+        .arg(
             Arg::with_name("rpc_hbase_timeout")
                 .long("rpc-hbase-timeout")
                 .value_name("SECONDS")

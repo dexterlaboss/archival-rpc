@@ -6,6 +6,7 @@ use {
             verify_signature,
             verify_and_parse_signatures_for_address_params,
         },
+        deprecated::*,
     },
     jsonrpc_core::{
         futures::future,
@@ -13,25 +14,21 @@ use {
     },
     jsonrpc_derive::rpc,
     solana_rpc_client_api::{
-        config::*,
-        // deprecated_config::*,
+        config::{
+            RpcContextConfig,
+            RpcEncodingConfigWrapper,
+            RpcBlocksConfigWrapper,
+            RpcSignaturesForAddressConfig,
+            RpcTransactionConfig,
+            RpcBlockConfig,
+            RpcSignatureStatusConfig,
+
+        },
         request::{
             MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS,
         },
         response::{Response as RpcResponse, *},
     },
-    // solana_sdk::{
-    //     clock::{
-    //         Slot,
-    //         UnixTimestamp,
-    //     },
-    //     commitment_config::{
-    //         CommitmentConfig,
-    //     },
-    //     signature::{
-    //         Signature,
-    //     },
-    // },
     solana_clock::{
         Slot,
         UnixTimestamp,
@@ -42,11 +39,6 @@ use {
     solana_signature::{
         Signature,
     },
-    // solana_transaction_status::{
-    //     EncodedConfirmedTransactionWithStatusMeta,
-    //     TransactionStatus,
-    //     UiConfirmedBlock,
-    // },
     solana_transaction_status_client_types::{
         EncodedConfirmedTransactionWithStatusMeta,
         TransactionStatus,
@@ -326,168 +318,172 @@ pub mod storage_rpc_full {
 }
 
 // RPC methods deprecated in v1.7
-// pub mod storage_rpc_deprecated_v1_7 {
-//     #![allow(deprecated)]
-//     use super::*;
-//     #[rpc]
-//     pub trait DeprecatedV1_7 {
-//         type Metadata;
-//
-//         // DEPRECATED
-//         #[rpc(meta, name = "getConfirmedBlock")]
-//         fn get_confirmed_block(
-//             &self,
-//             meta: Self::Metadata,
-//             slot: Slot,
-//             config: Option<RpcEncodingConfigWrapper<RpcConfirmedBlockConfig>>,
-//         ) -> BoxFuture<Result<Option<UiConfirmedBlock>>>;
-//
-//         // DEPRECATED
-//         #[rpc(meta, name = "getConfirmedBlocks")]
-//         fn get_confirmed_blocks(
-//             &self,
-//             meta: Self::Metadata,
-//             start_slot: Slot,
-//             config: Option<RpcConfirmedBlocksConfigWrapper>,
-//             commitment: Option<CommitmentConfig>,
-//         ) -> BoxFuture<Result<Vec<Slot>>>;
-//
-//         // DEPRECATED
-//         #[rpc(meta, name = "getConfirmedBlocksWithLimit")]
-//         fn get_confirmed_blocks_with_limit(
-//             &self,
-//             meta: Self::Metadata,
-//             start_slot: Slot,
-//             limit: usize,
-//             commitment: Option<CommitmentConfig>,
-//         ) -> BoxFuture<Result<Vec<Slot>>>;
-//
-//         // DEPRECATED
-//         #[rpc(meta, name = "getConfirmedTransaction")]
-//         fn get_confirmed_transaction(
-//             &self,
-//             meta: Self::Metadata,
-//             signature_str: String,
-//             config: Option<RpcEncodingConfigWrapper<RpcConfirmedTransactionConfig>>,
-//         ) -> BoxFuture<Result<Option<EncodedConfirmedTransactionWithStatusMeta>>>;
-//
-//         // DEPRECATED
-//         #[rpc(meta, name = "getConfirmedSignaturesForAddress2")]
-//         fn get_confirmed_signatures_for_address2(
-//             &self,
-//             meta: Self::Metadata,
-//             address: String,
-//             config: Option<RpcGetConfirmedSignaturesForAddress2Config>,
-//         ) -> BoxFuture<Result<Vec<RpcConfirmedTransactionStatusWithSignature>>>;
-//     }
-//
-//     pub struct DeprecatedV1_7Impl;
-//     impl DeprecatedV1_7 for DeprecatedV1_7Impl {
-//         type Metadata = JsonRpcRequestProcessor;
-//
-//         fn get_confirmed_block(
-//             &self,
-//             meta: Self::Metadata,
-//             slot: Slot,
-//             config: Option<RpcEncodingConfigWrapper<RpcConfirmedBlockConfig>>,
-//         ) -> BoxFuture<Result<Option<UiConfirmedBlock>>> {
-//             info!("getConfirmedBlock rpc request received: {:?}", slot);
-//             Box::pin(async move {
-//                 meta.get_block(slot, config.map(|config| config.convert()))
-//                     .await
-//             })
-//         }
-//
-//         fn get_confirmed_blocks(
-//             &self,
-//             meta: Self::Metadata,
-//             start_slot: Slot,
-//             wrapper: Option<RpcBlocksConfigWrapper>,
-//             config: Option<RpcContextConfig>,
-//         ) -> BoxFuture<Result<Vec<Slot>>> {
-//             let (end_slot, maybe_config) =
-//                 wrapper.map(|wrapper| wrapper.unzip()).unwrap_or_default();
-//             info!(
-//                 "getConfirmedBlocks rpc request received: {}-{:?}",
-//                 start_slot, end_slot
-//             );
-//             Box::pin(async move {
-//                 meta.get_blocks(start_slot, end_slot, config.or(maybe_config))
-//                     .await
-//             })
-//         }
-//
-//         fn get_confirmed_blocks_with_limit(
-//             &self,
-//             meta: Self::Metadata,
-//             start_slot: Slot,
-//             limit: usize,
-//             commitment: Option<CommitmentConfig>,
-//         ) -> BoxFuture<Result<Vec<Slot>>> {
-//             info!(
-//                 "getConfirmedBlocksWithLimit rpc request received: {}-{}",
-//                 start_slot, limit,
-//             );
-//             Box::pin(async move {
-//                 meta.get_blocks_with_limit(start_slot, limit, commitment)
-//                     .await
-//             })
-//         }
-//
-//         fn get_confirmed_transaction(
-//             &self,
-//             meta: Self::Metadata,
-//             signature_str: String,
-//             config: Option<RpcEncodingConfigWrapper<RpcConfirmedTransactionConfig>>,
-//         ) -> BoxFuture<Result<Option<EncodedConfirmedTransactionWithStatusMeta>>> {
-//             info!(
-//                 "getConfirmedTransaction rpc request received: {:?}",
-//                 signature_str
-//             );
-//             let signature = verify_signature(&signature_str);
-//             if let Err(err) = signature {
-//                 return Box::pin(future::err(err));
-//             }
-//             Box::pin(async move {
-//                 meta.get_transaction(signature.unwrap(), config.map(|config| config.convert()))
-//                     .await
-//             })
-//         }
-//
-//         fn get_confirmed_signatures_for_address2(
-//             &self,
-//             meta: Self::Metadata,
-//             address: String,
-//             config: Option<RpcGetConfirmedSignaturesForAddress2Config>,
-//         ) -> BoxFuture<Result<Vec<RpcConfirmedTransactionStatusWithSignature>>> {
-//             let config = config.unwrap_or_default();
-//             let commitment = config.commitment;
-//             let verification = verify_and_parse_signatures_for_address_params(
-//                 address,
-//                 config.before,
-//                 config.until,
-//                 config.limit,
-//             );
-//
-//             match verification {
-//                 Err(err) => Box::pin(future::err(err)),
-//                 Ok((address, before, until, limit)) => Box::pin(async move {
-//                     meta.get_signatures_for_address(
-//                         address,
-//                         before,
-//                         until,
-//                         limit,
-//                         RpcContextConfig {
-//                             commitment,
-//                             min_context_slot: None,
-//                         },
-//                     )
-//                         .await
-//                 }),
-//             }
-//         }
-//     }
-// }
+pub mod storage_rpc_deprecated_v1_7 {
+    #![allow(deprecated)]
+    use super::*;
+    #[rpc]
+    pub trait DeprecatedV1_7 {
+        type Metadata;
+
+        // DEPRECATED
+        #[rpc(meta, name = "getConfirmedBlock")]
+        fn get_confirmed_block(
+            &self,
+            meta: Self::Metadata,
+            slot: Slot,
+            config: Option<RpcEncodingConfigWrapper<RpcConfirmedBlockConfig>>,
+        ) -> BoxFuture<Result<Option<UiConfirmedBlock>>>;
+
+        // DEPRECATED
+        #[rpc(meta, name = "getConfirmedBlocks")]
+        fn get_confirmed_blocks(
+            &self,
+            meta: Self::Metadata,
+            start_slot: Slot,
+            wrapper: Option<RpcBlocksConfigWrapper>,
+            config: Option<RpcContextConfig>,
+            // config: Option<RpcConfirmedBlocksConfigWrapper>,
+            // commitment: Option<CommitmentConfig>,
+        ) -> BoxFuture<Result<Vec<Slot>>>;
+
+        // DEPRECATED
+        #[rpc(meta, name = "getConfirmedBlocksWithLimit")]
+        fn get_confirmed_blocks_with_limit(
+            &self,
+            meta: Self::Metadata,
+            start_slot: Slot,
+            limit: usize,
+            commitment: Option<CommitmentConfig>,
+        ) -> BoxFuture<Result<Vec<Slot>>>;
+
+        // DEPRECATED
+        #[rpc(meta, name = "getConfirmedTransaction")]
+        fn get_confirmed_transaction(
+            &self,
+            meta: Self::Metadata,
+            signature_str: String,
+            config: Option<RpcEncodingConfigWrapper<RpcConfirmedTransactionConfig>>,
+        ) -> BoxFuture<Result<Option<EncodedConfirmedTransactionWithStatusMeta>>>;
+
+        // DEPRECATED
+        #[rpc(meta, name = "getConfirmedSignaturesForAddress2")]
+        fn get_confirmed_signatures_for_address2(
+            &self,
+            meta: Self::Metadata,
+            address: String,
+            config: Option<RpcGetConfirmedSignaturesForAddress2Config>,
+        ) -> BoxFuture<Result<Vec<RpcConfirmedTransactionStatusWithSignature>>>;
+    }
+
+    pub struct DeprecatedV1_7Impl;
+    impl DeprecatedV1_7 for DeprecatedV1_7Impl {
+        type Metadata = JsonRpcRequestProcessor;
+
+        fn get_confirmed_block(
+            &self,
+            meta: Self::Metadata,
+            slot: Slot,
+            config: Option<RpcEncodingConfigWrapper<RpcConfirmedBlockConfig>>,
+        ) -> BoxFuture<Result<Option<UiConfirmedBlock>>> {
+            info!("getConfirmedBlock rpc request received: {:?}", slot);
+            Box::pin(async move {
+                meta.get_block(slot, config.map(|config| config.convert()))
+                    .await
+            })
+        }
+
+        fn get_confirmed_blocks(
+            &self,
+            meta: Self::Metadata,
+            start_slot: Slot,
+            wrapper: Option<RpcBlocksConfigWrapper>,
+            config: Option<RpcContextConfig>,
+            // wrapper: Option<RpcBlocksConfigWrapper>,
+            // config: Option<RpcContextConfig>,
+        ) -> BoxFuture<Result<Vec<Slot>>> {
+            let (end_slot, maybe_config) =
+                wrapper.map(|wrapper| wrapper.unzip()).unwrap_or_default();
+            info!(
+                "getConfirmedBlocks rpc request received: {}-{:?}",
+                start_slot, end_slot
+            );
+            Box::pin(async move {
+                meta.get_blocks(start_slot, end_slot, config.or(maybe_config))
+                    .await
+            })
+        }
+
+        fn get_confirmed_blocks_with_limit(
+            &self,
+            meta: Self::Metadata,
+            start_slot: Slot,
+            limit: usize,
+            commitment: Option<CommitmentConfig>,
+        ) -> BoxFuture<Result<Vec<Slot>>> {
+            info!(
+                "getConfirmedBlocksWithLimit rpc request received: {}-{}",
+                start_slot, limit,
+            );
+            Box::pin(async move {
+                meta.get_blocks_with_limit(start_slot, limit, commitment)
+                    .await
+            })
+        }
+
+        fn get_confirmed_transaction(
+            &self,
+            meta: Self::Metadata,
+            signature_str: String,
+            config: Option<RpcEncodingConfigWrapper<RpcConfirmedTransactionConfig>>,
+        ) -> BoxFuture<Result<Option<EncodedConfirmedTransactionWithStatusMeta>>> {
+            info!(
+                "getConfirmedTransaction rpc request received: {:?}",
+                signature_str
+            );
+            let signature = verify_signature(&signature_str);
+            if let Err(err) = signature {
+                return Box::pin(future::err(err));
+            }
+            Box::pin(async move {
+                meta.get_transaction(signature.unwrap(), config.map(|config| config.convert()))
+                    .await
+            })
+        }
+
+        fn get_confirmed_signatures_for_address2(
+            &self,
+            meta: Self::Metadata,
+            address: String,
+            config: Option<RpcGetConfirmedSignaturesForAddress2Config>,
+        ) -> BoxFuture<Result<Vec<RpcConfirmedTransactionStatusWithSignature>>> {
+            let config = config.unwrap_or_default();
+            let commitment = config.commitment;
+            let verification = verify_and_parse_signatures_for_address_params(
+                address,
+                config.before,
+                config.until,
+                config.limit,
+            );
+
+            match verification {
+                Err(err) => Box::pin(future::err(err)),
+                Ok((address, before, until, limit)) => Box::pin(async move {
+                    meta.get_signatures_for_address(
+                        address,
+                        before,
+                        until,
+                        limit,
+                        RpcContextConfig {
+                            commitment,
+                            min_context_slot: None,
+                        },
+                    )
+                        .await
+                }),
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 pub mod tests {

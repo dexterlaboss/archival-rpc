@@ -16,29 +16,12 @@ use {
     jsonrpc_derive::rpc,
     solana_rpc_client_api::{
         config::*,
-        // deprecated_config::*,
         request::{
             MAX_GET_CONFIRMED_BLOCKS_RANGE,
             MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS,
         },
         response::{Response as RpcResponse, *},
     },
-    // solana_sdk::{
-    //     // clock::{
-    //     //     Slot,
-    //     //     UnixTimestamp,
-    //     // },
-    //     // commitment_config::{
-    //     //     CommitmentConfig,
-    //     // },
-    //     // exit::Exit,
-    //     // pubkey::{
-    //     //     Pubkey,
-    //     // },
-    //     // signature::{
-    //     //     Signature,
-    //     // },
-    // },
     solana_clock::{
         Slot,
         UnixTimestamp,
@@ -55,22 +38,11 @@ use {
     solana_signature::{
         Signature,
     },
-    // solana_send_transaction_service::{
-    //     send_transaction_service::{
-    //         TransactionInfo
-    //     },
-    // },
     solana_transaction_status::{
         BlockEncodingOptions,
         ConfirmedBlock,
         ConfirmedTransactionStatusWithSignature,
         ConfirmedTransactionWithStatusMeta,
-
-        // EncodedConfirmedTransactionWithStatusMeta,
-        // TransactionConfirmationStatus,
-        // TransactionStatus,
-        // UiConfirmedBlock,
-        // UiTransactionEncoding,
     },
     solana_transaction_status_client_types::{
         EncodedConfirmedTransactionWithStatusMeta,

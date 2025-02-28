@@ -20,19 +20,16 @@ jobs:
           profile: minimal
           override: true
 
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y software-properties-common cmake build-essential libclang-dev libudev-dev libssl-dev libsasl2-dev
+
       - name: Install dependencies for cross-compilation
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             gcc-aarch64-linux-gnu \
             g++-aarch64-linux-gnu \
-            libc6-dev-arm64-cross \
-            software-properties-common \
-            cmake \
-            build-essential \ 
-            libclang-dev \
-            libudev-dev \
-            libssl-dev
+            libc6-dev-arm64-cross
 
       # Add Rust targets
       - name: Add Rust targets

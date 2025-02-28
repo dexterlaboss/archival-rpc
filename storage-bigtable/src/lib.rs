@@ -5,22 +5,45 @@ use {
     async_trait::async_trait,
     log::*,
     // solana_metrics::datapoint_info,
-    solana_sdk::{
-        clock::{
-            Slot,
-        },
-        pubkey::Pubkey,
-        signature::Signature,
-        sysvar::is_sysvar_id,
-        timing::AtomicInterval,
+    // solana_sdk::{
+    //     // clock::{
+    //     //     Slot,
+    //     // },
+    //     // pubkey::Pubkey,
+    //     // signature::Signature,
+    //     // sysvar::is_sysvar_id,
+    //     // timing::AtomicInterval,
+    // },
+    solana_clock::{
+        Slot,
+    },
+    solana_pubkey::{
+        Pubkey,
+    },
+    solana_signature::{
+        Signature,
+    },
+    solana_sysvar::{
+        is_sysvar_id,
+    },
+    solana_time_utils::{
+        AtomicInterval,
     },
     solana_storage_proto::convert::{generated, tx_by_addr},
     solana_transaction_status::{
-        extract_and_fmt_memos, ConfirmedBlock, ConfirmedTransactionStatusWithSignature,
+        extract_and_fmt_memos,
+        ConfirmedBlock,
+        ConfirmedTransactionStatusWithSignature,
         ConfirmedTransactionWithStatusMeta,
         TransactionByAddrInfo,
+        TransactionWithStatusMeta,
+        VersionedConfirmedBlock,
+        VersionedTransactionWithStatusMeta,
+
+        // TransactionStatus,
+    },
+    solana_transaction_status_client_types::{
         TransactionStatus,
-        TransactionWithStatusMeta, VersionedConfirmedBlock, VersionedTransactionWithStatusMeta,
     },
     solana_storage_adapter::{
         Error, Result, LedgerStorageAdapter,

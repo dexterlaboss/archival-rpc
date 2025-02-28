@@ -12,31 +12,57 @@ use {
     log::*,
     solana_metrics::Metrics,
     // solana_metrics::{datapoint_info, inc_new_counter_debug},
-    solana_sdk::{
-        clock::{
-            Slot,
-        },
-        pubkey::Pubkey,
-        signature::Signature,
-        sysvar::is_sysvar_id,
-        message::{
-            VersionedMessage,
-        },
-        transaction::{
-            Transaction
-        },
+    // solana_sdk::{
+    //     // clock::{
+    //     //     Slot,
+    //     // },
+    //     // pubkey::Pubkey,
+    //     // signature::Signature,
+    //     // sysvar::is_sysvar_id,
+    //     // message::{
+    //     //     VersionedMessage,
+    //     // },
+    //     // transaction::{
+    //     //     Transaction
+    //     // },
+    // },
+    solana_clock::{
+        Slot,
+    },
+    solana_pubkey::{
+        Pubkey,
+    },
+    solana_signature::{
+        Signature,
+    },
+    solana_sysvar::{
+        is_sysvar_id,
+    },
+    solana_message::{
+        // versions::VersionedMessage,
+        VersionedMessage,
+    },
+    solana_transaction::{
+        Transaction,
     },
     solana_storage_proto::{
         StoredCarIndexEntry,
         convert::{generated, tx_by_addr, car_index}
     },
     solana_transaction_status::{
-        extract_memos::extract_and_fmt_memos, ConfirmedBlock, ConfirmedTransactionStatusWithSignature,
-        ConfirmedTransactionWithStatusMeta,
         TransactionByAddrInfo,
-        TransactionStatus,
-        VersionedConfirmedBlock, VersionedTransactionWithStatusMeta,
+        VersionedConfirmedBlock,
+        VersionedTransactionWithStatusMeta,
         TransactionWithStatusMeta,
+        ConfirmedBlock,
+        ConfirmedTransactionStatusWithSignature,
+        ConfirmedTransactionWithStatusMeta,
+        extract_memos::extract_and_fmt_memos,
+
+        // TransactionStatus,
+    },
+    solana_transaction_status_client_types::{
+        TransactionStatus,
     },
     solana_storage_adapter::{
         Error, Result, LedgerStorageAdapter,

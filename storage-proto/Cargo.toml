@@ -11,15 +11,27 @@ edition = { workspace = true }
 
 [dependencies]
 bincode = { workspace = true }
-bs58 = { workspace = true }
 prost = { workspace = true }
 serde = { workspace = true }
-solana-account-decoder = { workspace = true }
-solana-sdk = { workspace = true }
+
 solana-transaction-status = { workspace = true }
+solana-serde = { workspace = true }
+solana-transaction-context = { workspace = true }
+solana-message = { workspace = true }
+solana-transaction = { workspace = true }
+solana-transaction-error = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-signature = { workspace = true }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
+solana-clock = { workspace = true }
+solana-account-decoder-client-types = { workspace = true }
+solana-reward-info = { workspace = true }
+solana-transaction-status-client-types = { workspace = true }
 
 [dev-dependencies]
 enum-iterator = { workspace = true }
+bs58 = { workspace = true }
 
 [lib]
 crate-type = ["lib"]

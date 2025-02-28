@@ -3,16 +3,17 @@
 
 use {
     crate::{
-        rpc_service::*,
+        rpc_server::*,
         rpc_network_node::*,
+        request_processor::JsonRpcConfig,
     },
     log::*,
-    solana_rpc::{
-        storage_rpc::JsonRpcConfig,
-    },
-    solana_sdk::{
-        exit::Exit,
-        rpc_port,
+    // solana_sdk::{
+    //     exit::Exit,
+    //     // rpc_port,
+    // },
+    solana_validator_exit::{
+        Exit,
     },
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -23,25 +24,7 @@ use {
     },
 };
 
-pub mod stats_reporter_service;
-
-pub mod rpc_service;
-
-#[macro_use]
-extern crate log;
-
-pub mod rpc_network_node;
-
-#[macro_use]
-pub mod rpc_network_info;
-
-#[macro_use]
-extern crate serde_derive;
-
-#[cfg(test)]
-#[macro_use]
-extern crate matches;
-
+pub const DEFAULT_RPC_PORT: u16 = 8899;
 
 #[derive(Debug)]
 pub struct RpcNodeConfig {
@@ -148,7 +131,8 @@ impl RpcNode {
         info!("Starting rpc server at {:?}", config.node_config.bind_ip_addr);
 
         let mut node = RpcNetworkNode::new_single_bind(
-            rpc_port::DEFAULT_RPC_PORT,
+            // rpc_port::DEFAULT_RPC_PORT,
+            DEFAULT_RPC_PORT,
             config.node_config.bind_ip_addr,
         );
         if let Some(rpc) = config.rpc_port {

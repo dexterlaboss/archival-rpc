@@ -1,4 +1,4 @@
-use log::warn;
+use std::fmt::Display;
 
 /// Wrapper for `nice(3)`.
 #[cfg(target_os = "linux")]
@@ -14,7 +14,7 @@ fn nice(adjustment: i8) -> Result<i8, nix::errno::Errno> {
         }
     }
         .map(|niceness| i8::try_from(niceness).expect("Unexpected niceness value"))
-        .map_err(nix::errno::from_i32)
+        .map_err(nix::errno::Errno::from_raw)
 }
 
 /// Adds `adjustment` to the nice value of calling thread. Negative `adjustment` increases priority,
@@ -69,6 +69,25 @@ pub fn is_renice_allowed(adjustment: i8) -> bool {
     adjustment == 0
 }
 
+pub fn is_niceness_adjustment_valid<T>(value: T) -> Result<(), String>
+where
+    T: AsRef<str> + Display,
+{
+    let adjustment = value
+        .as_ref()
+        .parse::<i8>()
+        .map_err(|err| format!("error parsing niceness adjustment value '{value}': {err}"))?;
+    if is_renice_allowed(adjustment) {
+        Ok(())
+    } else {
+        Err(String::from(
+            "niceness adjustment supported only on Linux; negative adjustment \
+             (priority increase) requires root or CAP_SYS_NICE (see `man 7 capabilities` \
+             for details)",
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[cfg(target_os = "linux")]
@@ -102,5 +121,13 @@ mod tests {
             let result = std::thread::spawn(|| nice(-1)).join().unwrap();
             assert!(result.is_err());
         }
+    }
+
+    #[test]
+    fn test_is_niceness_adjustment_valid() {
+        use super::is_niceness_adjustment_valid;
+        assert_eq!(is_niceness_adjustment_valid("0"), Ok(()));
+        assert!(is_niceness_adjustment_valid("128").is_err());
+        assert!(is_niceness_adjustment_valid("-129").is_err());
     }
 }

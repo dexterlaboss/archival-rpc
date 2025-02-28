@@ -3,14 +3,14 @@ name = "solana-storage-adapter"
 version = { workspace = true }
 description = "Solana Storage Adapter"
 repository = "https://github.com/solana-labs/solana"
-license = "Apache-2.0"
+license = "AGPL-3.0-only"
 homepage = "https://solana.com/"
 edition = "2021"
 
 [dependencies]
 async-trait = { workspace = true }
 log = { workspace = true }
-solana-sdk = { workspace = true }
+#solana-sdk = { workspace = true }
 solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
@@ -23,6 +23,15 @@ flate2 = "1.0.24"
 zstd = "0.11.2"
 bincode = "1.3.3"
 xxhash-rust = { version = "0.8.12", features = ["xxh3", "xxh32"] }
+
+solana-clock = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-signature = { workspace = true }
+solana-message = { workspace = true }
+solana-serde = { workspace = true }
+solana-transaction = { workspace = true }
+solana-transaction-error = { workspace = true }
+solana-transaction-status-client-types = { workspace = true }
 
 [lib]
 crate-type = ["lib"]

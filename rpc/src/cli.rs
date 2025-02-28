@@ -1,5 +1,8 @@
 use std::num::NonZeroUsize;
 use {
+    crate::{
+        request_processor::MAX_REQUEST_BODY_SIZE,
+    },
     clap::{
         App,
         Arg,
@@ -9,14 +12,15 @@ use {
     solana_clap_utils::{
         input_validators::{
             is_parsable,
-            is_niceness_adjustment_valid,
         },
     },
-    solana_sdk::{
-        rpc_port,
-    },
+    solana_perf::thread::is_niceness_adjustment_valid,
+    // solana_sdk::{
+    //     rpc_port,
+    // },
 };
-use solana_rpc::storage_rpc::MAX_REQUEST_BODY_SIZE;
+
+pub const DEFAULT_RPC_PORT: u16 = 8899;
 
 /// Deprecated argument description should be moved into the [`deprecated_arguments()`] function,
 /// expressed as an instance of this type.
@@ -356,7 +360,8 @@ pub struct DefaultStorageRpcArgs {
 impl DefaultStorageRpcArgs {
     pub fn new() -> Self {
         DefaultStorageRpcArgs {
-            rpc_port: rpc_port::DEFAULT_RPC_PORT.to_string(),
+            // rpc_port: rpc_port::DEFAULT_RPC_PORT.to_string(),
+            rpc_port: DEFAULT_RPC_PORT.to_string(),
             rpc_hbase_timeout: "5".to_string(),
             rpc_threads: num_cpus::get().to_string(),
             rpc_niceness_adjustment: "0".to_string(),

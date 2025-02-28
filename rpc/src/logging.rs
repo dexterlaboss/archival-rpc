@@ -8,8 +8,6 @@ use {
     },
 };
 
-pub mod cli;
-
 #[cfg(unix)]
 fn redirect_stderr(filename: &str) {
     use std::os::unix::io::AsRawFd;

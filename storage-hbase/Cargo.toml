@@ -24,23 +24,23 @@ flate2 = { workspace = true }
 zstd = { workspace = true }
 #futures = "0.3.24"
 futures = { workspace = true }
-goauth = { workspace = true }
+#goauth = { workspace = true }
 #http = "0.2.8"
-http = { workspace = true }
-hyper = { workspace = true }
-hyper-proxy = { workspace = true }
+#http = { workspace = true }
+#hyper = { workspace = true }
+#hyper-proxy = { workspace = true }
 log = { workspace = true }
 #prost = "0.11.0"
 prost = { workspace = true }
 #prost-types = "0.11.1"
-prost-types = { workspace = true }
+#prost-types = { workspace = true }
 #serde = "1.0.144"
 serde = { workspace = true }
 serde_derive = { workspace = true }
-smpl_jwt = { workspace = true }
+#smpl_jwt = { workspace = true }
 memcache = { workspace = true }
 solana-metrics = { workspace = true }
-solana-sdk = { workspace = true }
+#solana-sdk = { workspace = true }
 solana-storage-adapter = { workspace = true }
 solana-storage-proto = { workspace = true }
 solana-transaction-status = { workspace = true }
@@ -48,7 +48,7 @@ solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
 #tokio = "1"
 #tonic = { version = "0.8.0", features = ["tls", "transport"] }
-tonic = { workspace = true, features = ["tls", "transport"] }
+#tonic = { workspace = true, features = ["tls", "transport"] }
 chrono = { workspace = true }
 dexter-ipfs-car = { workspace = true }
 #tokio-util = { version = "0.7", features = ["io"] }
@@ -59,9 +59,18 @@ hdfs-native = { workspace = true }
 anyhow = { workspace = true }
 #moka = { version = "0.12.7", features = ["sync"] }
 
+solana-clock = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-signature = { workspace = true }
+solana-sysvar = { workspace = true }
+solana-message = { workspace = true }
+solana-transaction = { workspace = true }
+solana-transaction-status-client-types = { workspace = true }
+
 [dependencies.tokio]
 features = ["rt-multi-thread", "macros", "io-util", "rt", "net", "time"]
-version = "~1.42.0"
+version = "1.43.0"
+#version = "~1.42.0"
 #version = "1.11.0"
 
 # openssl is a dependency of the goauth and smpl_jwt crates, but explicitly

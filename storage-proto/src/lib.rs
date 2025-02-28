@@ -1,21 +1,60 @@
-use solana_sdk::clock::UnixTimestamp;
+// use solana_sdk::clock::UnixTimestamp;
 use {
     serde::{Deserialize, Serialize},
-    solana_account_decoder::{
-        parse_token::{real_number_string_trimmed, UiTokenAmount},
-        StringAmount,
+    // solana_account_decoder::{
+    //     // parse_token::{real_number_string_trimmed, UiTokenAmount},
+    //     StringAmount,
+    // },
+    solana_account_decoder_client_types::{
+        token::{
+            real_number_string_trimmed,
+            UiTokenAmount
+        },
+        // StringAmount,
     },
-    solana_sdk::{
-        deserialize_utils::default_on_eof, message::v0::LoadedAddresses, transaction::Result,
-        transaction_context::TransactionReturnData,
+    // solana_sdk::{
+    //     // deserialize_utils::default_on_eof,
+    //     // message::v0::LoadedAddresses,
+    //     // transaction::Result,
+    //     // transaction_context::TransactionReturnData,
+    // },
+    solana_serde::{
+        default_on_eof,
     },
-    solana_transaction_status::{
-        InnerInstructions, Reward, RewardType, TransactionStatusMeta, TransactionTokenBalance,
+    solana_clock::{
+        UnixTimestamp,
+    },
+    solana_message::{
+        // versions::v0::loaded::LoadedAddresses,
+        v0::LoadedAddresses,
+    },
+    // solana_transaction::{
+    //     Result,
+    // },
+    solana_transaction_error::TransactionResult as Result,
+    solana_transaction_context::{
+        TransactionReturnData,
+    },
+    // solana_transaction_status::{
+    //     // InnerInstructions,
+    //     // Reward,
+    //     // RewardType,
+    //     // TransactionStatusMeta,
+    //     // TransactionTokenBalance,
+    // },
+    solana_reward_info::RewardType,
+    solana_transaction_status_client_types::{
+        InnerInstructions,
+        Reward,
+        TransactionStatusMeta,
+        TransactionTokenBalance,
     },
     std::str::FromStr,
 };
 
 pub mod convert;
+
+pub type StringAmount = String;
 
 pub type StoredExtendedRewards = Vec<StoredExtendedReward>;
 

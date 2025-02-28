@@ -5,25 +5,55 @@ use {
     async_trait::async_trait,
     log::*,
     serde::{Deserialize, Serialize},
-    solana_sdk::{
-        clock::{Slot, UnixTimestamp},
-        pubkey::Pubkey,
-        signature::Signature,
-        message::v0::LoadedAddresses,
-        deserialize_utils::default_on_eof,
-        transaction::{TransactionError, VersionedTransaction},
+    // solana_sdk::{
+    //     // clock::{Slot, UnixTimestamp},
+    //     // pubkey::Pubkey,
+    //     // signature::Signature,
+    //     // message::v0::LoadedAddresses,
+    //     // deserialize_utils::default_on_eof,
+    //     // transaction::{TransactionError, VersionedTransaction},
+    // },
+    solana_clock::{
+        Slot,
+        UnixTimestamp,
+    },
+    solana_pubkey::{
+        Pubkey,
+    },
+    solana_signature::{
+        Signature,
+    },
+    solana_message::{
+        // versions::v0::loaded::LoadedAddresses,
+        v0::LoadedAddresses,
+    },
+    solana_serde::{
+        default_on_eof,
+    },
+    solana_transaction::{
+        versioned::VersionedTransaction,
+    },
+    solana_transaction_error::{
+        TransactionError,
     },
     solana_transaction_status::{
         ConfirmedBlock,
         ConfirmedTransactionStatusWithSignature,
         ConfirmedTransactionWithStatusMeta,
-        TransactionConfirmationStatus,
-        TransactionStatus,
-        TransactionStatusMeta,
         TransactionWithStatusMeta,
         VersionedTransactionWithStatusMeta,
         VersionedConfirmedBlock,
         TransactionByAddrInfo,
+
+        // TransactionConfirmationStatus,
+        // TransactionStatus,
+        // TransactionStatusMeta,
+        // Reward,
+    },
+    solana_transaction_status_client_types::{
+        TransactionConfirmationStatus,
+        TransactionStatus,
+        TransactionStatusMeta,
         Reward,
     },
     std::{
@@ -138,6 +168,7 @@ pub struct StoredConfirmedBlock {
     parent_slot: Slot,
     transactions: Vec<StoredConfirmedBlockTransaction>,
     rewards: StoredConfirmedBlockRewards,
+    // pub num_partitions: Option<u64>,
     block_time: Option<UnixTimestamp>,
     #[serde(deserialize_with = "default_on_eof")]
     block_height: Option<u64>,
@@ -181,6 +212,7 @@ impl From<ConfirmedBlock> for StoredConfirmedBlock {
             parent_slot,
             transactions,
             rewards,
+            num_partitions: _num_partitions,
             block_time,
             block_height,
         } = confirmed_block;
@@ -205,6 +237,7 @@ impl From<StoredConfirmedBlock> for ConfirmedBlock {
             parent_slot,
             transactions,
             rewards,
+            // num_partitions: _num_partitions,
             block_time,
             block_height,
         } = confirmed_block;
@@ -215,6 +248,7 @@ impl From<StoredConfirmedBlock> for ConfirmedBlock {
             parent_slot,
             transactions: transactions.into_iter().map(|tx| tx.into()).collect(),
             rewards: rewards.into_iter().map(|reward| reward.into()).collect(),
+            num_partitions: None,
             block_time,
             block_height,
         }

@@ -32,30 +32,79 @@ serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
 #soketto = { workspace = true }
+
 solana-perf = { workspace = true }
 #solana-rayon-threadlimit = { workspace = true }
 solana-rpc-client-api = { workspace = true }
-solana-sdk = { workspace = true }
-solana-send-transaction-service = { workspace = true }
+#solana-sdk = { workspace = true }
+#solana-send-transaction-service = { workspace = true }
 solana-storage-hbase = { workspace = true }
 solana-storage-adapter = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
 solana-metrics = { workspace = true }
+
 #stream-cancel = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 #tokio = { version = "~1.14.1", features = ["full"] }
 tokio-util = { workspace = true, features = ["codec", "compat"] }
 
-#[dev-dependencies]
+solana-clock = { workspace = true }
+solana-validator-exit = { workspace = true }
+solana-commitment-config = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-signature = { workspace = true }
+solana-hash = { workspace = true }
+solana-transaction-status-client-types = { workspace = true }
+
+
+clap = { workspace = true }
+console = { workspace = true }
+#fd-lock = { workspace = true }
+#indicatif = { workspace = true }
+num_cpus = { workspace = true }
+solana-clap-utils = { workspace = true }
+solana-logger = { workspace = true }
+solana-net-utils = { workspace = true }
+#solana-rpc = { workspace = true }
+#solana-rpc-core = { workspace = true }
+solana-storage-bigtable = { workspace = true }
+symlink = { workspace = true }
+
+
+#num_enum = { workspace = true }
+rayon = { workspace = true }
+#sys-info = { workspace = true }
+
+[dev-dependencies]
+matches = { workspace = true }
 #serial_test = { workspace = true }
 #solana-net-utils = { workspace = true }
 #symlink = { workspace = true }
+
+[build-dependencies]
+rustc_version = { workspace = true }
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+jemallocator = { workspace = true }
+
+[target."cfg(unix)".dependencies]
+libc = { workspace = true }
+signal-hook = { workspace = true }
+#sysctl = { workspace = true }
 
 [lib]
 crate-type = ["lib"]
 name = "solana_rpc"
 
+[[bin]]
+name = "archival-rpc"
+path = "src/main.rs"
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+
+
+
+

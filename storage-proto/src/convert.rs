@@ -1,25 +1,75 @@
-use solana_sdk::clock::UnixTimestamp;
+// use solana_sdk::clock::UnixTimestamp;
 use {
     crate::{StoredExtendedRewards, StoredTransactionStatusMeta, StoredCarIndexEntry},
-    solana_account_decoder::parse_token::{real_number_string_trimmed, UiTokenAmount},
-    solana_sdk::{
-        hash::Hash,
-        instruction::{CompiledInstruction, InstructionError},
-        message::{
-            legacy::Message as LegacyMessage,
-            v0::{self, LoadedAddresses, MessageAddressTableLookup},
-            MessageHeader, VersionedMessage,
-        },
-        pubkey::Pubkey,
-        signature::Signature,
-        transaction::{Transaction, TransactionError, VersionedTransaction},
-        transaction_context::TransactionReturnData,
+    // solana_account_decoder::parse_token::{real_number_string_trimmed, UiTokenAmount},
+    solana_account_decoder_client_types::{
+        token::{real_number_string_trimmed, UiTokenAmount},
+    },
+    // solana_sdk::{
+    //     // hash::Hash,
+    //     // instruction::{CompiledInstruction, InstructionError},
+    //     // message::{
+    //     //     // legacy::Message as LegacyMessage,
+    //     //     v0::{self, LoadedAddresses, MessageAddressTableLookup},
+    //     //     MessageHeader, VersionedMessage,
+    //     // },
+    //     // pubkey::Pubkey,
+    //     // signature::Signature,
+    //     // transaction::{Transaction, TransactionError, VersionedTransaction},
+    //     // transaction_context::TransactionReturnData,
+    // },
+    solana_hash::{
+        Hash,
+    },
+    solana_instruction::{
+        error::InstructionError,
+    },
+    solana_clock::{
+        UnixTimestamp,
+    },
+    solana_message::{
+        compiled_instruction::CompiledInstruction,
+        legacy::Message as LegacyMessage,
+        v0::{self, LoadedAddresses, MessageAddressTableLookup},
+        MessageHeader, VersionedMessage,
+    },
+    solana_pubkey::{
+        Pubkey,
+    },
+    solana_signature::{
+        Signature,
+    },
+    solana_transaction::{
+        Transaction,
+        // TransactionError,
+        versioned::VersionedTransaction,
+    },
+    solana_transaction_error::TransactionError,
+    solana_transaction_context::{
+        TransactionReturnData,
     },
     solana_transaction_status::{
-        ConfirmedBlock, InnerInstruction, InnerInstructions, Reward, RewardType,
-        TransactionByAddrInfo, TransactionStatusMeta, TransactionTokenBalance,
-        TransactionWithStatusMeta, VersionedConfirmedBlock, VersionedTransactionWithStatusMeta,
+        ConfirmedBlock,
+        TransactionByAddrInfo,
+        TransactionWithStatusMeta,
+        VersionedConfirmedBlock,
+        VersionedTransactionWithStatusMeta,
         ConfirmedTransactionWithStatusMeta,
+
+        // InnerInstruction,
+        // InnerInstructions,
+        // Reward,
+        // RewardType,
+        // TransactionStatusMeta,
+        // TransactionTokenBalance,
+    },
+    solana_reward_info::RewardType,
+    solana_transaction_status_client_types::{
+        Reward,
+        TransactionTokenBalance,
+        TransactionStatusMeta,
+        InnerInstruction,
+        InnerInstructions,
     },
     std::{
         convert::{TryFrom, TryInto},
@@ -131,6 +181,12 @@ impl From<generated::Reward> for Reward {
     }
 }
 
+impl From<u64> for generated::NumPartitions {
+    fn from(num_partitions: u64) -> Self {
+        Self { num_partitions }
+    }
+}
+
 impl From<VersionedConfirmedBlock> for generated::ConfirmedBlock {
     fn from(confirmed_block: VersionedConfirmedBlock) -> Self {
         let VersionedConfirmedBlock {
@@ -139,6 +195,7 @@ impl From<VersionedConfirmedBlock> for generated::ConfirmedBlock {
             parent_slot,
             transactions,
             rewards,
+            num_partitions,
             block_time,
             block_height,
         } = confirmed_block;
@@ -149,6 +206,7 @@ impl From<VersionedConfirmedBlock> for generated::ConfirmedBlock {
             parent_slot,
             transactions: transactions.into_iter().map(|tx| tx.into()).collect(),
             rewards: rewards.into_iter().map(|r| r.into()).collect(),
+            num_partitions: num_partitions.map(Into::into),
             block_time: block_time.map(|timestamp| generated::UnixTimestamp { timestamp }),
             block_height: block_height.map(|block_height| generated::BlockHeight { block_height }),
         }
@@ -166,6 +224,7 @@ impl TryFrom<generated::ConfirmedBlock> for ConfirmedBlock {
             parent_slot,
             transactions,
             rewards,
+            num_partitions,
             block_time,
             block_height,
         } = confirmed_block;
@@ -179,6 +238,8 @@ impl TryFrom<generated::ConfirmedBlock> for ConfirmedBlock {
                 .map(|tx| tx.try_into())
                 .collect::<std::result::Result<Vec<_>, Self::Error>>()?,
             rewards: rewards.into_iter().map(|r| r.into()).collect(),
+            num_partitions: num_partitions
+                .map(|generated::NumPartitions { num_partitions }| num_partitions),
             block_time: block_time.map(|generated::UnixTimestamp { timestamp }| timestamp),
             block_height: block_height.map(|generated::BlockHeight { block_height }| block_height),
         })
@@ -853,6 +914,8 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
             33 => TransactionError::InvalidLoadedAccountsDataSizeLimit,
             34 => TransactionError::ResanitizationNeeded,
             36 => TransactionError::UnbalancedTransaction,
+            37 => TransactionError::ProgramCacheHitMaxLimit,
+            38 => TransactionError::CommitCancelled,
             _ => return Err("Invalid TransactionError"),
         })
     }
@@ -965,8 +1028,17 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                 TransactionError::ResanitizationNeeded => {
                     tx_by_addr::TransactionErrorType::ResanitizationNeeded
                 }
+                TransactionError::ProgramExecutionTemporarilyRestricted { .. } => {
+                    tx_by_addr::TransactionErrorType::ProgramExecutionTemporarilyRestricted
+                }
                 TransactionError::UnbalancedTransaction => {
                     tx_by_addr::TransactionErrorType::UnbalancedTransaction
+                }
+                TransactionError::ProgramCacheHitMaxLimit => {
+                    tx_by_addr::TransactionErrorType::ProgramCacheHitMaxLimit
+                }
+                TransactionError::CommitCancelled => {
+                    tx_by_addr::TransactionErrorType::CommitCancelled
                 }
             } as i32,
             instruction_error: match transaction_error {
@@ -1152,6 +1224,11 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                     })
                 }
                 TransactionError::InsufficientFundsForRent { account_index } => {
+                    Some(tx_by_addr::TransactionDetails {
+                        index: account_index as u32,
+                    })
+                }
+                TransactionError::ProgramExecutionTemporarilyRestricted { account_index } => {
                     Some(tx_by_addr::TransactionDetails {
                         index: account_index as u32,
                     })

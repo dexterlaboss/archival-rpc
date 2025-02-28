@@ -48,7 +48,7 @@ solana-transaction-status-client-types = { workspace = true }
 clap = { workspace = true }
 console = { workspace = true }
 num_cpus = { workspace = true }
-solana-clap-utils = { workspace = true }
+#solana-clap-utils = { workspace = true }
 solana-logger = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-storage-bigtable = { workspace = true }

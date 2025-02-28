@@ -19,7 +19,7 @@ exclude = []
 resolver = "2"
 
 [workspace.package]
-version = "2.0.4"
+version = "2.0.5"
 authors = ["Aurimas Narkevicius <aurimas.n@dexterlab.com>"]
 repository = "https://github.com/dexterlaboss/archival-rpc"
 homepage = "https://dexterlab.com/"
@@ -74,7 +74,7 @@ smpl_jwt = "0.7.1"
 md5 = "0.7"
 memcache = "0.17.2"
 
-solana-clap-utils = "=2.2.0"
+#solana-clap-utils = "=2.2.0"
 solana-logger = "=2.2.1"
 solana-rpc-client-api = "=2.2.0"
 solana-transaction-status = "=2.2.0"
@@ -101,14 +101,14 @@ solana-account-decoder-client-types = "=2.2.0"
 solana-transaction-status-client-types = "=2.2.0"
 
 
-solana-metrics = { path = "metrics", version = "=2.0.4" }
-solana-net-utils = { path = "net-utils", version = "=2.0.4" }
-solana-perf = { path = "perf", version = "=2.0.4" }
-solana-rpc = { path = "rpc", version = "=2.0.4" }
-solana-storage-adapter = { path = "storage-adapter", version = "=2.0.4" }
-solana-storage-bigtable = { path = "storage-bigtable", version = "=2.0.4" }
-solana-storage-hbase = { path = "storage-hbase", version = "=2.0.4" }
-solana-storage-proto = { path = "storage-proto", version = "=2.0.4" }
+solana-metrics = { path = "metrics", version = "=2.0.5" }
+solana-net-utils = { path = "net-utils", version = "=2.0.5" }
+solana-perf = { path = "perf", version = "=2.0.5" }
+solana-rpc = { path = "rpc", version = "=2.0.5" }
+solana-storage-adapter = { path = "storage-adapter", version = "=2.0.5" }
+solana-storage-bigtable = { path = "storage-bigtable", version = "=2.0.5" }
+solana-storage-hbase = { path = "storage-hbase", version = "=2.0.5" }
+solana-storage-proto = { path = "storage-proto", version = "=2.0.5" }
 
 spl-memo = "=3.0.1"
 symlink = "0.1.0"

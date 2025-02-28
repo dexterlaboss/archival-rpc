@@ -1,6 +1,9 @@
 use {
     crate::{
         request_processor::MAX_REQUEST_BODY_SIZE,
+        input_validators::{
+            is_parsable,
+        },
     },
     clap::{
         App,
@@ -8,11 +11,6 @@ use {
         ArgMatches,
     },
     log::warn,
-    solana_clap_utils::{
-        input_validators::{
-            is_parsable,
-        },
-    },
     solana_perf::thread::is_niceness_adjustment_valid,
 };
 

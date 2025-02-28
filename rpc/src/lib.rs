@@ -33,6 +33,8 @@ pub mod rpc_network_info;
 
 pub mod rpc_core;
 
+pub mod input_validators;
+
 pub mod deprecated;
 
 #[cfg(test)]

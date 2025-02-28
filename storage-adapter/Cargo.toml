@@ -10,7 +10,6 @@ edition = "2021"
 [dependencies]
 async-trait = { workspace = true }
 log = { workspace = true }
-#solana-sdk = { workspace = true }
 solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }

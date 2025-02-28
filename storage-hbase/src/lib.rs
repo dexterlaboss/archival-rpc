@@ -4,28 +4,13 @@ use std::sync::Arc;
 use {
     crate::{
         hbase::{
-            RowData,
+            // RowData,
             deserialize_protobuf_or_bincode_cell_data,
         },
     },
     async_trait::async_trait,
     log::*,
     solana_metrics::Metrics,
-    // solana_metrics::{datapoint_info, inc_new_counter_debug},
-    // solana_sdk::{
-    //     // clock::{
-    //     //     Slot,
-    //     // },
-    //     // pubkey::Pubkey,
-    //     // signature::Signature,
-    //     // sysvar::is_sysvar_id,
-    //     // message::{
-    //     //     VersionedMessage,
-    //     // },
-    //     // transaction::{
-    //     //     Transaction
-    //     // },
-    // },
     solana_clock::{
         Slot,
     },
@@ -35,11 +20,10 @@ use {
     solana_signature::{
         Signature,
     },
-    solana_sysvar::{
-        is_sysvar_id,
-    },
+    // solana_sysvar::{
+    //     is_sysvar_id,
+    // },
     solana_message::{
-        // versions::VersionedMessage,
         VersionedMessage,
     },
     solana_transaction::{
@@ -58,8 +42,6 @@ use {
         ConfirmedTransactionStatusWithSignature,
         ConfirmedTransactionWithStatusMeta,
         extract_memos::extract_and_fmt_memos,
-
-        // TransactionStatus,
     },
     solana_transaction_status_client_types::{
         TransactionStatus,
@@ -67,7 +49,6 @@ use {
     solana_storage_adapter::{
         Error, Result, LedgerStorageAdapter,
         StoredConfirmedBlock,
-        // StoredCarIndexEntry,
         StoredConfirmedTransactionWithStatusMeta,
         TransactionInfo,
         LegacyTransactionByAddrInfo,
@@ -77,7 +58,7 @@ use {
         signature_to_tx_full_key,
         compression::{decompress},
     },
-    // moka::sync::Cache,
+    solana_reserved_account_keys::ReservedAccountKeys,
     std::{
         collections::{
             HashMap,
@@ -86,7 +67,7 @@ use {
         convert::{TryInto},
         time::{Duration, Instant},
         boxed::Box,
-        num::NonZeroUsize,
+        // num::NonZeroUsize,
     },
     memcache::Client as MemcacheClient,
     tokio::task,
@@ -94,25 +75,36 @@ use {
 use dexter_ipfs_car::reader::read_block_at_offset_reader;
 use log::{debug, warn};
 use chrono::{Utc, TimeZone, Datelike};  // <-- Datelike is critical
-use std::io::{Cursor, SeekFrom};
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use std::io::{
+    Cursor,
+    // SeekFrom
+};
+// use tokio::io::{
+//     // AsyncReadExt,
+//     // AsyncSeekExt
+// };
 use prost::Message;
 
-use hdfs_native::{Client, file::FileReader};
-use tokio_util::io::StreamReader;
-use async_compression::tokio::bufread::GzipDecoder;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use bytes::Bytes;
-use futures::{Stream, TryStreamExt};
-use std::{pin::Pin};
+use hdfs_native::{
+    Client,
+    // file::FileReader
+};
+// use tokio_util::io::StreamReader;
+// use async_compression::tokio::bufread::GzipDecoder;
+// use tokio::io::{AsyncBufReadExt, BufReader};
+// use bytes::Bytes;
+// use futures::{
+//     // Stream,
+//     TryStreamExt
+// };
+// use std::{pin::Pin};
 use std::panic;
 
-use std::task::{Context, Poll};
-use tokio::io::{AsyncRead, ReadBuf};
-// use hdfs_native::FileReader;
-use futures::future::BoxFuture;
-use futures::Future;
-use std::sync::{Mutex};
+// use std::task::{Context, Poll};
+// use tokio::io::{AsyncRead, ReadBuf};
+// use futures::future::BoxFuture;
+// use futures::Future;
+// use std::sync::{Mutex};
 
 // #[macro_use]
 // extern crate solana_metrics;
@@ -288,6 +280,7 @@ impl Default for LedgerStorageConfig {
 pub struct LedgerStorage {
     connection: hbase::HBaseConnection,
     hdfs_client: Arc<Client>,
+    hdfs_path: String,
     // namespace: Option<String>,
     // cache: Option<Cache<Slot, RowData>>,
     use_md5_row_key_salt: bool,
@@ -379,6 +372,7 @@ impl LedgerStorage {
         Ok(Self {
             connection,
             hdfs_client: Arc::new(hdfs_client),
+            hdfs_path,
             // namespace,
             // cache,
             use_md5_row_key_salt,
@@ -393,7 +387,7 @@ impl LedgerStorage {
     /// (replicating your `DailyPartitionedPathStrategy` logic).
     /// If you actually have a stored `car_path` field in `CarIndexEntry`,
     /// you can skip this.
-    fn generate_car_path(&self, min_slot: u64, max_slot: u64, block_time: i64) -> Result<String> {
+    fn generate_car_path(&self, base_path: &str, min_slot: u64, max_slot: u64, block_time: i64) -> Result<String> {
         if block_time == 0 {
             return Err(Error::StorageBackendError(Box::new(
                 hbase::Error::ObjectCorrupt(
@@ -409,7 +403,6 @@ impl LedgerStorage {
             ))
         })?;
 
-        let base_path = "/chain-archives/sol/car_test";
         let path = format!(
             "{}/year={:04}/month={:02}/day={:02}/{}-{}.blocks.car",
             base_path, dt.year(), dt.month(), dt.day(), min_slot, max_slot
@@ -496,6 +489,7 @@ impl LedgerStorageAdapter for LedgerStorage {
 
         // 2) Generate path to `.car` in HDFS
         let car_path = self.generate_car_path(
+            self.hdfs_path.as_str(),
             index_entry.start_slot,
             index_entry.end_slot,
             index_entry.timestamp,
@@ -1064,7 +1058,8 @@ impl LedgerStorageAdapter for LedgerStorage {
 
         // println!("Uploading block: {:?}", confirmed_block);
 
-        let mut tx_cells = vec![];
+        let reserved_account_keys = ReservedAccountKeys::new_all_activated();
+        let mut tx_cells = Vec::with_capacity(confirmed_block.transactions.len());
         for (index, transaction_with_meta) in confirmed_block.transactions.iter().enumerate() {
             let VersionedTransactionWithStatusMeta { meta, transaction } = transaction_with_meta;
             let err = meta.status.clone().err();
@@ -1073,7 +1068,8 @@ impl LedgerStorageAdapter for LedgerStorage {
             let memo = extract_and_fmt_memos(transaction_with_meta);
 
             for address in transaction_with_meta.account_keys().iter() {
-                if !is_sysvar_id(address) {
+                // if !is_sysvar_id(address) {
+                if !reserved_account_keys.is_reserved(address) {
                     by_addr
                         .entry(address)
                         .or_default()

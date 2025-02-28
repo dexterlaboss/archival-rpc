@@ -1,5 +1,4 @@
-#![allow(clippy::integer_arithmetic)]
-#![recursion_limit = "2048"]
+
 
 use {
     crate::{
@@ -8,10 +7,6 @@ use {
         request_processor::JsonRpcConfig,
     },
     log::*,
-    // solana_sdk::{
-    //     exit::Exit,
-    //     // rpc_port,
-    // },
     solana_validator_exit::{
         Exit,
     },

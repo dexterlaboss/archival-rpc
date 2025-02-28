@@ -1,9 +1,7 @@
 //! Implementation defined RPC server errors
 use {
     jsonrpc_core::{Error, ErrorCode},
-    // solana_sdk::clock::Slot,
     solana_clock::Slot,
-    // solana_transaction_status::EncodeError,
     solana_transaction_status_client_types::{
         EncodeError,
     },

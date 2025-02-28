@@ -10,7 +10,9 @@ use {
     },
     jsonrpc_core::{
         futures::future,
-        BoxFuture, Error, Metadata, Result
+        BoxFuture, Error,
+        // Metadata,
+        Result
     },
     jsonrpc_derive::rpc,
     solana_rpc_client_api::{

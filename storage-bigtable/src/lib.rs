@@ -4,16 +4,6 @@ use {
     crate::bigtable::RowKey,
     async_trait::async_trait,
     log::*,
-    // solana_metrics::datapoint_info,
-    // solana_sdk::{
-    //     // clock::{
-    //     //     Slot,
-    //     // },
-    //     // pubkey::Pubkey,
-    //     // signature::Signature,
-    //     // sysvar::is_sysvar_id,
-    //     // timing::AtomicInterval,
-    // },
     solana_clock::{
         Slot,
     },
@@ -23,12 +13,13 @@ use {
     solana_signature::{
         Signature,
     },
-    solana_sysvar::{
-        is_sysvar_id,
-    },
+    // solana_sysvar::{
+    //     is_sysvar_id,
+    // },
     solana_time_utils::{
         AtomicInterval,
     },
+    solana_reserved_account_keys::ReservedAccountKeys,
     solana_storage_proto::convert::{generated, tx_by_addr},
     solana_transaction_status::{
         extract_and_fmt_memos,
@@ -39,8 +30,6 @@ use {
         TransactionWithStatusMeta,
         VersionedConfirmedBlock,
         VersionedTransactionWithStatusMeta,
-
-        // TransactionStatus,
     },
     solana_transaction_status_client_types::{
         TransactionStatus,
@@ -329,9 +318,9 @@ impl LedgerStorage {
                     let err = None;
 
                     for address in transaction.message.account_keys.iter() {
-                        if !is_sysvar_id(address) {
+                        // if !is_sysvar_id(address) {
                             addresses.insert(address);
-                        }
+                        // }
                     }
 
                     expected_tx_infos.insert(
@@ -346,9 +335,9 @@ impl LedgerStorage {
                     let err = meta.status.clone().err();
 
                     for address in tx_with_meta.account_keys().iter() {
-                        if !is_sysvar_id(address) {
+                        // if !is_sysvar_id(address) {
                             addresses.insert(address);
-                        }
+                        // }
                     }
 
                     expected_tx_infos.insert(
@@ -728,7 +717,8 @@ impl LedgerStorageAdapter for LedgerStorage {
         );
         let mut by_addr: HashMap<&Pubkey, Vec<TransactionByAddrInfo>> = HashMap::new();
 
-        let mut tx_cells = vec![];
+        let reserved_account_keys = ReservedAccountKeys::new_all_activated();
+        let mut tx_cells = Vec::with_capacity(confirmed_block.transactions.len());
         for (index, transaction_with_meta) in confirmed_block.transactions.iter().enumerate() {
             let VersionedTransactionWithStatusMeta { meta, transaction } = transaction_with_meta;
             let err = meta.status.clone().err();
@@ -737,7 +727,8 @@ impl LedgerStorageAdapter for LedgerStorage {
             let memo = extract_and_fmt_memos(transaction_with_meta);
 
             for address in transaction_with_meta.account_keys().iter() {
-                if !is_sysvar_id(address) {
+                // if !is_sysvar_id(address) {
+                if !reserved_account_keys.is_reserved(address) {
                     by_addr
                         .entry(address)
                         .or_default()

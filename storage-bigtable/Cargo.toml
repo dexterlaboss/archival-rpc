@@ -28,7 +28,6 @@ prost-types = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 smpl_jwt = { workspace = true }
-#solana-sdk = { workspace = true }
 solana-storage-adapter = { workspace = true }
 solana-storage-proto = { workspace = true }
 solana-transaction-status = { workspace = true }
@@ -43,6 +42,7 @@ solana-signature = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
+solana-reserved-account-keys = { workspace = true }
 
 # openssl is a dependency of the goauth and smpl_jwt crates, but explicitly
 # declare it here as well to activate the "vendored" feature that builds OpenSSL

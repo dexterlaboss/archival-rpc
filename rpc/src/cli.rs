@@ -1,4 +1,4 @@
-use std::num::NonZeroUsize;
+// use std::num::NonZeroUsize;
 use {
     crate::{
         request_processor::MAX_REQUEST_BODY_SIZE,
@@ -15,9 +15,6 @@ use {
         },
     },
     solana_perf::thread::is_niceness_adjustment_valid,
-    // solana_sdk::{
-    //     rpc_port,
-    // },
 };
 
 pub const DEFAULT_RPC_PORT: u16 = 8899;

@@ -2,7 +2,7 @@
 use {
     crate::{
         rpc::{
-            // storage_rpc_deprecated_v1_7::*,
+            storage_rpc_deprecated_v1_7::*,
             storage_rpc_full::*,
             storage_rpc_minimal::*,
             *,
@@ -19,33 +19,35 @@ use {
     crossbeam_channel::unbounded,
     jsonrpc_core::{
         MetaIoHandler,
-        Middleware,
-        Call,
-        Output,
-        Response,
-        Metadata,
-        Error,
-        Failure,
+        // Middleware,
+        // Call,
+        // Output,
+        // Response,
+        // Metadata,
+        // Error,
+        // Failure,
     },
     jsonrpc_http_server::{
-        hyper, AccessControlAllowOrigin, CloseHandle, DomainsValidation, RequestMiddleware,
-        RequestMiddlewareAction, ServerBuilder,
+        hyper, AccessControlAllowOrigin, CloseHandle, DomainsValidation,
+        // RequestMiddleware,
+        // RequestMiddlewareAction,
+        ServerBuilder,
     },
     solana_storage_adapter::LedgerStorageAdapter,
     solana_perf::thread::renice_this_thread,
-    // solana_sdk::{
-    //     exit::Exit,
-    // },
     solana_validator_exit::{
         Exit,
     },
-    prometheus::{
-        TextEncoder,
-        Encoder,
-    },
+    // prometheus::{
+    //     TextEncoder,
+    //     Encoder,
+    // },
     std::{
         net::SocketAddr,
-        path::{Path, PathBuf},
+        path::{
+            Path,
+            // PathBuf
+        },
         sync::{
             Arc, RwLock,
         },
@@ -53,12 +55,19 @@ use {
     },
 
 };
-use std::future::Future;
-use futures::future::{Either, FutureExt, BoxFuture};
-use std::panic::AssertUnwindSafe;
-use hyper::{body::to_bytes, Request, Body, StatusCode};
-use futures::stream::{self, StreamExt};
-use serde_json::Value;
+// use std::future::Future;
+// use futures::future::{
+//     // Either,
+//     // FutureExt,
+//     // BoxFuture
+// };
+// use std::panic::AssertUnwindSafe;
+// use hyper::{body::to_bytes, Request, Body, StatusCode};
+// use futures::stream::{
+//     // self,
+//     // StreamExt
+// };
+// use serde_json::Value;
 
 
 
@@ -195,7 +204,8 @@ impl JsonRpcService {
         let max_request_body_size = config
             .max_request_body_size
             .unwrap_or(MAX_REQUEST_BODY_SIZE);
-        let (request_processor, _receiver) = JsonRpcRequestProcessor::new(
+        // let (request_processor, _receiver) = JsonRpcRequestProcessor::new(
+        let request_processor = JsonRpcRequestProcessor::new(
             config,
             rpc_service_exit.clone(),
             hbase_ledger_storage,
@@ -223,7 +233,7 @@ impl JsonRpcService {
                     io.extend_with(storage_rpc_minimal::MinimalImpl.to_delegate());
                     if full_api {
                         io.extend_with(storage_rpc_full::FullImpl.to_delegate());
-                        // io.extend_with(storage_rpc_deprecated_v1_7::DeprecatedV1_7Impl.to_delegate());
+                        io.extend_with(storage_rpc_deprecated_v1_7::DeprecatedV1_7Impl.to_delegate());
                     }
 
                     let request_middleware = RpcRequestMiddleware::new(

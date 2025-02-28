@@ -3,22 +3,22 @@
 use {
     crate::{
         custom_error::RpcCustomError,
-        tx_info::TransactionInfo,
     },
-    crossbeam_channel::{
-        unbounded,
-        Receiver,
-    },
+    // crossbeam_channel::{
+    //     unbounded,
+    //     Receiver,
+    // },
     jsonrpc_core::{
-        futures::future,
-        BoxFuture, Error, Metadata, Result
+        // futures::future,
+        // BoxFuture,
+        Error, Metadata, Result
     },
-    jsonrpc_derive::rpc,
+    // jsonrpc_derive::rpc,
     solana_rpc_client_api::{
         config::*,
         request::{
             MAX_GET_CONFIRMED_BLOCKS_RANGE,
-            MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS,
+            // MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS,
         },
         response::{Response as RpcResponse, *},
     },
@@ -60,7 +60,7 @@ use {
             RwLock,
         },
         time::{Duration, Instant},
-        num::NonZeroUsize,
+        // num::NonZeroUsize,
     },
 };
 
@@ -233,17 +233,24 @@ impl JsonRpcRequestProcessor {
         rpc_service_exit: Arc<RwLock<Exit>>,
         hbase_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
         fallback_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
-    ) -> (Self, Receiver<TransactionInfo>) {
-        let (_sender, receiver) = unbounded();
-        (
-            Self {
-                config,
-                rpc_service_exit,
-                hbase_ledger_storage,
-                fallback_ledger_storage,
-            },
-            receiver,
-        )
+    ) -> Self {
+    // ) -> (Self, Receiver<TransactionInfo>) {
+    //     let (_sender, receiver) = unbounded();
+        Self {
+            config,
+            rpc_service_exit,
+            hbase_ledger_storage,
+            fallback_ledger_storage,
+        }
+        // (
+        //     Self {
+        //         config,
+        //         rpc_service_exit,
+        //         hbase_ledger_storage,
+        //         fallback_ledger_storage,
+        //     },
+        //     receiver,
+        // )
     }
 
     fn check_hbase_result<T>(

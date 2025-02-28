@@ -1,4 +1,6 @@
 #![allow(clippy::integer_arithmetic)]
+#![recursion_limit = "2048"]
+
 pub mod custom_error;
 
 pub mod request_processor;
@@ -22,8 +24,6 @@ pub mod middleware;
 
 pub mod rpc;
 
-// pub mod stats_reporter_service;
-
 pub mod rpc_server;
 
 pub mod rpc_network_node;
@@ -34,6 +34,8 @@ pub mod rpc_network_info;
 pub mod rpc_core;
 
 pub mod tx_info;
+
+pub mod deprecated;
 
 #[cfg(test)]
 #[macro_use]

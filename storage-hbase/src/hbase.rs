@@ -4,11 +4,6 @@ use {
     },
     backoff::{future::retry, ExponentialBackoff},
     log::*,
-    // std::{
-    //     time::{
-    //         Duration,
-    //     },
-    // },
     thiserror::Error,
     hbase_thrift::hbase::{BatchMutation, HbaseSyncClient, THbaseSyncClient, TScan},
     hbase_thrift::{

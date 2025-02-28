@@ -6,9 +6,6 @@ use {
         rpc_service::JsonRpcService,
     },
     solana_metrics::Metrics,
-    // solana_sdk::{
-    //     exit::Exit,
-    // },
     solana_validator_exit::{
         Exit,
     },

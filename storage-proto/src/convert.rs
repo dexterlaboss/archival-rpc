@@ -1,31 +1,15 @@
-// use solana_sdk::clock::UnixTimestamp;
+
 use {
     crate::{StoredExtendedRewards, StoredTransactionStatusMeta, StoredCarIndexEntry},
-    // solana_account_decoder::parse_token::{real_number_string_trimmed, UiTokenAmount},
     solana_account_decoder_client_types::{
         token::{real_number_string_trimmed, UiTokenAmount},
     },
-    // solana_sdk::{
-    //     // hash::Hash,
-    //     // instruction::{CompiledInstruction, InstructionError},
-    //     // message::{
-    //     //     // legacy::Message as LegacyMessage,
-    //     //     v0::{self, LoadedAddresses, MessageAddressTableLookup},
-    //     //     MessageHeader, VersionedMessage,
-    //     // },
-    //     // pubkey::Pubkey,
-    //     // signature::Signature,
-    //     // transaction::{Transaction, TransactionError, VersionedTransaction},
-    //     // transaction_context::TransactionReturnData,
-    // },
     solana_hash::{
         Hash,
+        HASH_BYTES,
     },
     solana_instruction::{
         error::InstructionError,
-    },
-    solana_clock::{
-        UnixTimestamp,
     },
     solana_message::{
         compiled_instruction::CompiledInstruction,
@@ -41,7 +25,6 @@ use {
     },
     solana_transaction::{
         Transaction,
-        // TransactionError,
         versioned::VersionedTransaction,
     },
     solana_transaction_error::TransactionError,
@@ -55,13 +38,6 @@ use {
         VersionedConfirmedBlock,
         VersionedTransactionWithStatusMeta,
         ConfirmedTransactionWithStatusMeta,
-
-        // InnerInstruction,
-        // InnerInstructions,
-        // Reward,
-        // RewardType,
-        // TransactionStatusMeta,
-        // TransactionTokenBalance,
     },
     solana_reward_info::RewardType,
     solana_transaction_status_client_types::{
@@ -83,7 +59,6 @@ pub mod generated {
         env!("OUT_DIR"),
         "/solana.storage.confirmed_block.rs"
     ));
-    // include!("../proto/solana.storage.confirmed_block.rs");
 }
 
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -92,7 +67,6 @@ pub mod tx_by_addr {
         env!("OUT_DIR"),
         "/solana.storage.transaction_by_addr.rs"
     ));
-    // include!("../proto/solana.storage.transaction_by_addr.rs");
 }
 
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -399,7 +373,10 @@ impl From<generated::Message> for VersionedMessage {
             .into_iter()
             .map(|key| Pubkey::try_from(key).unwrap())
             .collect();
-        let recent_blockhash = Hash::new(&value.recent_blockhash);
+        // let recent_blockhash = Hash::new(&value.recent_blockhash);
+        let recent_blockhash = <[u8; HASH_BYTES]>::try_from(value.recent_blockhash)
+            .map(Hash::new_from_array)
+            .unwrap();
         let instructions = value.instructions.into_iter().map(|ix| ix.into()).collect();
         let address_table_lookups = value
             .address_table_lookups

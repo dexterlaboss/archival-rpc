@@ -5072,6 +5072,7 @@ dependencies = [
  "smpl_jwt",
  "solana-clock",
  "solana-pubkey",
+ "solana-reserved-account-keys",
  "solana-signature",
  "solana-storage-adapter",
  "solana-storage-proto",
@@ -5113,6 +5114,7 @@ dependencies = [
  "solana-message",
  "solana-metrics",
  "solana-pubkey",
+ "solana-reserved-account-keys",
  "solana-signature",
  "solana-storage-adapter",
  "solana-storage-proto",
@@ -7069,13 +7071,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "crossbeam-epoch"
-version = "0.9.5"
-source = "git+https://github.com/solana-labs/crossbeam?rev=fd279d707025f0e60951e429bf778b4813d1b6bf#fd279d707025f0e60951e429bf778b4813d1b6bf"
-
-[[patch.unused]]
-name = "ntapi"
-version = "0.3.7"
-source = "git+https://github.com/solana-labs/ntapi?rev=97ede981a1777883ff86d142b75024b023f04fad#97ede981a1777883ff86d142b75024b023f04fad"

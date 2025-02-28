@@ -1,18 +1,13 @@
 use std::format;
-use std::time::{Duration, Instant};
-use log::{debug, error};
+// use std::time::{Duration, Instant};
+use log::{
+    // debug,
+    error
+};
 use {
     async_trait::async_trait,
     log::*,
     serde::{Deserialize, Serialize},
-    // solana_sdk::{
-    //     // clock::{Slot, UnixTimestamp},
-    //     // pubkey::Pubkey,
-    //     // signature::Signature,
-    //     // message::v0::LoadedAddresses,
-    //     // deserialize_utils::default_on_eof,
-    //     // transaction::{TransactionError, VersionedTransaction},
-    // },
     solana_clock::{
         Slot,
         UnixTimestamp,
@@ -24,7 +19,6 @@ use {
         Signature,
     },
     solana_message::{
-        // versions::v0::loaded::LoadedAddresses,
         v0::LoadedAddresses,
     },
     solana_serde::{
@@ -44,11 +38,6 @@ use {
         VersionedTransactionWithStatusMeta,
         VersionedConfirmedBlock,
         TransactionByAddrInfo,
-
-        // TransactionConfirmationStatus,
-        // TransactionStatus,
-        // TransactionStatusMeta,
-        // Reward,
     },
     solana_transaction_status_client_types::{
         TransactionConfirmationStatus,

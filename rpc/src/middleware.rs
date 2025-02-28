@@ -1,19 +1,19 @@
 use {
-    crate::{
-        rpc::{
-            // storage_rpc_deprecated_v1_7::*,
-            storage_rpc_full::*,
-            storage_rpc_minimal::*,
-            *,
-        },
-        request_processor::{
-            *,
-        },
-    },
+    // crate::{
+    //     // rpc::{
+    //     //     // storage_rpc_deprecated_v1_7::*,
+    //     //     // storage_rpc_full::*,
+    //     //     // storage_rpc_minimal::*,
+    //     //     // *,
+    //     // },
+    //     // request_processor::{
+    //     //     *,
+    //     // },
+    // },
     solana_metrics::Metrics,
-    crossbeam_channel::unbounded,
+    // crossbeam_channel::unbounded,
     jsonrpc_core::{
-        MetaIoHandler,
+        // MetaIoHandler,
         Middleware,
         Call,
         Output,
@@ -23,36 +23,45 @@ use {
         Failure,
     },
     jsonrpc_http_server::{
-        hyper, AccessControlAllowOrigin, CloseHandle, DomainsValidation, RequestMiddleware,
-        RequestMiddlewareAction, ServerBuilder,
+        hyper,
+        // AccessControlAllowOrigin,
+        // CloseHandle,
+        // DomainsValidation,
+        RequestMiddleware,
+        RequestMiddlewareAction,
+        // ServerBuilder,
     },
-    solana_storage_adapter::LedgerStorageAdapter,
-    solana_perf::thread::renice_this_thread,
-    // solana_sdk::{
-    //     exit::Exit,
+    // solana_storage_adapter::LedgerStorageAdapter,
+    // solana_perf::thread::renice_this_thread,
+    // solana_validator_exit::{
+    //     Exit,
     // },
-    solana_validator_exit::{
-        Exit,
-    },
     prometheus::{
         TextEncoder,
         Encoder,
     },
     std::{
-        net::SocketAddr,
-        path::{Path, PathBuf},
-        sync::{
-            Arc, RwLock,
+        // net::SocketAddr,
+        path::{
+            // Path,
+            PathBuf
         },
-        thread::{self, Builder, JoinHandle},
+        sync::{
+            Arc,
+            // RwLock,
+        },
+        // thread::{self, Builder, JoinHandle},
     },
 
 };
 use std::future::Future;
 use futures::future::{Either, FutureExt, BoxFuture};
 use std::panic::AssertUnwindSafe;
-use hyper::{body::to_bytes, Request, Body, StatusCode};
-use futures::stream::{self, StreamExt};
+use hyper::{
+    // body::to_bytes,
+    Request, Body, StatusCode
+};
+// use futures::stream::{self};
 use serde_json::Value;
 
 #[derive(Clone)]
@@ -218,6 +227,7 @@ impl RequestMiddleware for RpcRequestMiddleware {
     }
 }
 
+#[allow(dead_code)]
 fn count_jsonrpc_requests(body: &hyper::body::Bytes) -> usize {
     match serde_json::from_slice::<Value>(body) {
         Ok(Value::Array(batch)) => batch.len(),  // JSON-RPC batch request

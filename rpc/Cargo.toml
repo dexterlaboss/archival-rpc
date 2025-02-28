@@ -10,12 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-#base64 = { workspace = true }
-#bincode = { workspace = true }
-#bs58 = { workspace = true }
 crossbeam-channel = { workspace = true }
-#dashmap = { workspace = true }
-#itertools = { workspace = true }
 jsonrpc-core = { workspace = true }
 jsonrpc-core-client = { workspace = true }
 jsonrpc-derive = { workspace = true }
@@ -26,28 +21,20 @@ lazy_static = { workspace = true }
 futures = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
-#rayon = { workspace = true }
-#regex = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
-#soketto = { workspace = true }
 
 solana-perf = { workspace = true }
-#solana-rayon-threadlimit = { workspace = true }
 solana-rpc-client-api = { workspace = true }
-#solana-sdk = { workspace = true }
-#solana-send-transaction-service = { workspace = true }
 solana-storage-hbase = { workspace = true }
 solana-storage-adapter = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
 solana-metrics = { workspace = true }
 
-#stream-cancel = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-#tokio = { version = "~1.14.1", features = ["full"] }
 tokio-util = { workspace = true, features = ["codec", "compat"] }
 
 solana-clock = { workspace = true }
@@ -58,30 +45,18 @@ solana-signature = { workspace = true }
 solana-hash = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
 
-
 clap = { workspace = true }
 console = { workspace = true }
-#fd-lock = { workspace = true }
-#indicatif = { workspace = true }
 num_cpus = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-logger = { workspace = true }
 solana-net-utils = { workspace = true }
-#solana-rpc = { workspace = true }
-#solana-rpc-core = { workspace = true }
 solana-storage-bigtable = { workspace = true }
 symlink = { workspace = true }
-
-
-#num_enum = { workspace = true }
 rayon = { workspace = true }
-#sys-info = { workspace = true }
 
 [dev-dependencies]
 matches = { workspace = true }
-#serial_test = { workspace = true }
-#solana-net-utils = { workspace = true }
-#symlink = { workspace = true }
 
 [build-dependencies]
 rustc_version = { workspace = true }
@@ -92,7 +67,6 @@ jemallocator = { workspace = true }
 [target."cfg(unix)".dependencies]
 libc = { workspace = true }
 signal-hook = { workspace = true }
-#sysctl = { workspace = true }
 
 [lib]
 crate-type = ["lib"]

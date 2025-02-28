@@ -32,8 +32,7 @@ jobs:
             build-essential \ 
             libclang-dev \
             libudev-dev \
-            libssl-dev \
-            libsasl2-dev
+            libssl-dev
 
       # Add Rust targets
       - name: Add Rust targets

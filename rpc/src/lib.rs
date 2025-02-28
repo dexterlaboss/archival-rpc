@@ -33,8 +33,6 @@ pub mod rpc_network_info;
 
 pub mod rpc_core;
 
-pub mod tx_info;
-
 pub mod deprecated;
 
 #[cfg(test)]

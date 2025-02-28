@@ -1,9 +1,4 @@
-use std::format;
-// use std::time::{Duration, Instant};
-use log::{
-    // debug,
-    error
-};
+
 use {
     async_trait::async_trait,
     log::*,
@@ -47,6 +42,7 @@ use {
     },
     std::{
         boxed::Box,
+        format,
     },
     thiserror::Error,
     tokio::task::JoinError,

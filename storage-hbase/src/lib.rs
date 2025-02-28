@@ -1,10 +1,8 @@
 #![allow(clippy::integer_arithmetic)]
 
-use std::sync::Arc;
 use {
     crate::{
         hbase::{
-            // RowData,
             deserialize_protobuf_or_bincode_cell_data,
         },
     },
@@ -20,9 +18,6 @@ use {
     solana_signature::{
         Signature,
     },
-    // solana_sysvar::{
-    //     is_sysvar_id,
-    // },
     solana_message::{
         VersionedMessage,
     },
@@ -59,52 +54,30 @@ use {
         compression::{decompress},
     },
     solana_reserved_account_keys::ReservedAccountKeys,
+    dexter_ipfs_car::reader::read_block_at_offset_reader,
     std::{
         collections::{
             HashMap,
+        },
+        io::{
+            Cursor,
         },
         str::FromStr,
         convert::{TryInto},
         time::{Duration, Instant},
         boxed::Box,
-        // num::NonZeroUsize,
+        sync::Arc,
+        panic,
+    },
+    hdfs_native::{
+        Client,
     },
     memcache::Client as MemcacheClient,
+    chrono::{Utc, TimeZone, Datelike},
     tokio::task,
+    prost::Message,
 };
-use dexter_ipfs_car::reader::read_block_at_offset_reader;
-use log::{debug, warn};
-use chrono::{Utc, TimeZone, Datelike};  // <-- Datelike is critical
-use std::io::{
-    Cursor,
-    // SeekFrom
-};
-// use tokio::io::{
-//     // AsyncReadExt,
-//     // AsyncSeekExt
-// };
-use prost::Message;
 
-use hdfs_native::{
-    Client,
-    // file::FileReader
-};
-// use tokio_util::io::StreamReader;
-// use async_compression::tokio::bufread::GzipDecoder;
-// use tokio::io::{AsyncBufReadExt, BufReader};
-// use bytes::Bytes;
-// use futures::{
-//     // Stream,
-//     TryStreamExt
-// };
-// use std::{pin::Pin};
-use std::panic;
-
-// use std::task::{Context, Poll};
-// use tokio::io::{AsyncRead, ReadBuf};
-// use futures::future::BoxFuture;
-// use futures::Future;
-// use std::sync::{Mutex};
 
 // #[macro_use]
 // extern crate solana_metrics;

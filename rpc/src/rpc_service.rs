@@ -19,18 +19,9 @@ use {
     crossbeam_channel::unbounded,
     jsonrpc_core::{
         MetaIoHandler,
-        // Middleware,
-        // Call,
-        // Output,
-        // Response,
-        // Metadata,
-        // Error,
-        // Failure,
     },
     jsonrpc_http_server::{
         hyper, AccessControlAllowOrigin, CloseHandle, DomainsValidation,
-        // RequestMiddleware,
-        // RequestMiddlewareAction,
         ServerBuilder,
     },
     solana_storage_adapter::LedgerStorageAdapter,
@@ -38,15 +29,10 @@ use {
     solana_validator_exit::{
         Exit,
     },
-    // prometheus::{
-    //     TextEncoder,
-    //     Encoder,
-    // },
     std::{
         net::SocketAddr,
         path::{
             Path,
-            // PathBuf
         },
         sync::{
             Arc, RwLock,
@@ -55,21 +41,6 @@ use {
     },
 
 };
-// use std::future::Future;
-// use futures::future::{
-//     // Either,
-//     // FutureExt,
-//     // BoxFuture
-// };
-// use std::panic::AssertUnwindSafe;
-// use hyper::{body::to_bytes, Request, Body, StatusCode};
-// use futures::stream::{
-//     // self,
-//     // StreamExt
-// };
-// use serde_json::Value;
-
-
 
 pub struct JsonRpcService {
     thread_hdl: JoinHandle<()>,

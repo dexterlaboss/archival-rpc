@@ -11,7 +11,6 @@ use {
     jsonrpc_core::{
         futures::future,
         BoxFuture, Error,
-        // Metadata,
         Result
     },
     jsonrpc_derive::rpc,

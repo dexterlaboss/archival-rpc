@@ -1,7 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
 use jemallocator::Jemalloc;
-// use std::num::NonZeroUsize;
 use {
     solana_rpc::{
         rpc_core::RpcNodeBuilder,

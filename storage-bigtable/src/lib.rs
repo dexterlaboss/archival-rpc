@@ -13,9 +13,6 @@ use {
     solana_signature::{
         Signature,
     },
-    // solana_sysvar::{
-    //     is_sysvar_id,
-    // },
     solana_time_utils::{
         AtomicInterval,
     },

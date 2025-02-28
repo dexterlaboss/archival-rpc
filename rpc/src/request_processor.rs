@@ -4,21 +4,14 @@ use {
     crate::{
         custom_error::RpcCustomError,
     },
-    // crossbeam_channel::{
-    //     unbounded,
-    //     Receiver,
-    // },
     jsonrpc_core::{
-        // futures::future,
-        // BoxFuture,
         Error, Metadata, Result
     },
-    // jsonrpc_derive::rpc,
     solana_rpc_client_api::{
         config::*,
         request::{
             MAX_GET_CONFIRMED_BLOCKS_RANGE,
-            // MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS,
+            MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT,
         },
         response::{Response as RpcResponse, *},
     },
@@ -58,25 +51,12 @@ use {
         sync::{
             Arc,
             RwLock,
-        },
-        time::{Duration, Instant},
-        // num::NonZeroUsize,
-    },
-};
-
-use {
-    solana_rpc_client_api::{
-        request::{
-            MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT,
-        },
-    },
-    std::{
-        sync::{
             atomic::{
                 AtomicBool,
                 Ordering
             },
         },
+        time::{Duration, Instant},
     },
 };
 

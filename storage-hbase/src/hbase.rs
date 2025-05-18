@@ -279,6 +279,7 @@ impl HBase {
         start_at: Option<RowKey>,
         end_at: Option<RowKey>,
         rows_limit: i64,
+        reversed: bool,
     ) -> Result<Vec<(RowKey, RowData)>> {
         if rows_limit == 0 {
             return Ok(vec![]);
@@ -300,6 +301,7 @@ impl HBase {
         scan.batch_size = Some(rows_limit as i32);
         scan.timestamp = None;
         scan.caching = rows_limit.try_into().ok();
+        scan.reversed = Some(reversed);
         scan.filter_string = Some(b"ColumnPaginationFilter(1,0)".to_vec());
 
         let scan_id = self.client.scanner_open_with_scan(

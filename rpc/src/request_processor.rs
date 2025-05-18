@@ -501,6 +501,7 @@ impl JsonRpcRequestProcessor {
         before: Option<Signature>,
         until: Option<Signature>,
         limit: usize,
+        reversed: Option<bool>,
         config: RpcContextConfig,
     ) -> Result<Vec<RpcConfirmedTransactionStatusWithSignature>> {
         let commitment = config.commitment.unwrap_or_default();
@@ -535,6 +536,7 @@ impl JsonRpcRequestProcessor {
                         hbase_before.as_ref(),
                         until.as_ref(),
                         limit,
+                        reversed,
                     )
                     .await;
                 match hbase_results {

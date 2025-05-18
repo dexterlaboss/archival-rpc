@@ -19,7 +19,6 @@ use {
             RpcContextConfig,
             RpcEncodingConfigWrapper,
             RpcBlocksConfigWrapper,
-            RpcSignaturesForAddressConfig,
             RpcTransactionConfig,
             RpcBlockConfig,
             RpcSignatureStatusConfig,
@@ -46,6 +45,18 @@ use {
         UiConfirmedBlock,
     },
 };
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcSignaturesForAddressConfig {
+    pub before: Option<String>, // Signature as base-58 string
+    pub until: Option<String>,  // Signature as base-58 string
+    pub limit: Option<usize>,
+    pub reversed: Option<bool>,
+    #[serde(flatten)]
+    pub commitment: Option<CommitmentConfig>,
+    pub min_context_slot: Option<Slot>,
+}
 
 // Minimal RPC interface
 pub mod storage_rpc_minimal {
@@ -287,6 +298,7 @@ pub mod storage_rpc_full {
                 before,
                 until,
                 limit,
+                reversed,
                 commitment,
                 min_context_slot,
             } = config.unwrap_or_default();
@@ -301,6 +313,7 @@ pub mod storage_rpc_full {
                         before,
                         until,
                         limit,
+                        reversed,
                         RpcContextConfig {
                             commitment,
                             min_context_slot,
@@ -474,6 +487,7 @@ pub mod storage_rpc_deprecated_v1_7 {
                         before,
                         until,
                         limit,
+                        Some(false),
                         RpcContextConfig {
                             commitment,
                             min_context_slot: None,

@@ -261,6 +261,7 @@ pub struct LedgerStorage {
     cache_client: Option<MemcacheClient>,
     disable_tx_fallback: bool,
     metrics: Arc<Metrics>,
+    use_block_car_files: bool,
 }
 
 impl LedgerStorage {
@@ -353,6 +354,7 @@ impl LedgerStorage {
             cache_client,
             disable_tx_fallback,
             metrics,
+            use_block_car_files: false,
         })
     }
 
@@ -433,6 +435,13 @@ impl LedgerStorageAdapter for LedgerStorage {
 
     /// Fetch the confirmed block from the desired slot
     async fn get_confirmed_block(&self, slot: Slot, _use_cache: bool) -> Result<ConfirmedBlock> {
+        if !self.use_block_car_files {
+            debug!(
+                "LedgerStorage::get_confirmed_block → falling back to legacy storage for slot {slot}"
+            );
+            return self.get_confirmed_block_from_legacy_storage(slot, _use_cache).await;
+        }
+
         debug!("LedgerStorage::get_confirmed_block request received for slot={}", slot);
 
         // 1) Load CarIndexEntry from HBase
@@ -785,11 +794,26 @@ impl LedgerStorageAdapter for LedgerStorage {
                 hbase::Error::RowNotFound => Error::SignatureNotFound,
                 _ => Error::StorageBackendError(Box::new(err)),
             })?;
+        debug!("Got transaction info from tx table [slot: {}, index: {}]", slot, index);
 
         epoch = calculate_epoch(slot);
 
         // Load the block and return the transaction
-        let block = self.get_confirmed_block(slot, true).await?;
+        // let block = self.get_confirmed_block(slot, true).await?;
+        let block = match self.get_confirmed_block(slot, true).await {
+            Ok(block) => block,
+            Err(e) => {
+                error!(
+                    "Failed to fetch confirmed block at slot {} for transaction {}: {:?}",
+                    slot,
+                    signature,
+                    e
+                );
+                return Err(e);
+            }
+        };
+
+        debug!("Got block from blocks table at slot {}", slot);
         match block.transactions.into_iter().nth(index as usize) {
             None => {
                 warn!("Transaction info for {} is corrupt", signature);
@@ -804,6 +828,7 @@ impl LedgerStorageAdapter for LedgerStorage {
                     Ok(None)
                 } else {
                     tx_type = determine_transaction_type(&tx_with_meta); // Determine the transaction type
+                    debug!("Recording transaction (source: {}, epoch: {}, tx_type: {})", source, epoch, tx_type);
                     self.metrics.record_transaction(source, epoch, tx_type);
 
                     Ok(Some(ConfirmedTransactionWithStatusMeta {
@@ -817,6 +842,183 @@ impl LedgerStorageAdapter for LedgerStorage {
     }
 
     async fn get_confirmed_signatures_for_address(
+        &self,
+        address: &Pubkey,
+        before_signature: Option<&Signature>,
+        until_signature: Option<&Signature>,
+        limit: usize,
+        reversed: Option<bool>,
+    ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {
+        if reversed.unwrap_or(false) {
+            self.get_signatures_forward(address, before_signature, until_signature, limit).await
+        } else {
+            self.get_signatures_backward(address, before_signature, until_signature, limit).await
+        }
+    }
+
+    async fn get_signatures_forward(
+        &self,
+        address: &Pubkey,
+        before_signature: Option<&Signature>,
+        until_signature: Option<&Signature>,
+        limit: usize,
+    ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {
+        let mut hbase = self.connection.client();
+        let address_prefix = format!("{address}/");
+
+        let (first_slot, before_transaction_index, before_fallback) = match until_signature {
+            None => (0, u32::MAX, false),
+            Some(until_signature) => {
+                match hbase.get_bincode_cell("tx", until_signature.to_string()).await {
+                    Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
+                    Err(hbase::Error::RowNotFound) => {
+                        match self.get_full_transaction(until_signature).await? {
+                            Some(full_transaction) => (full_transaction.slot, 0, true),
+                            None => return Ok(vec![]),
+                        }
+                    },
+                    Err(err) => return Err(err.into()),
+                }
+            }
+        };
+
+        let (last_slot, until_transaction_index, until_fallback) = match before_signature {
+            None => (Slot::MAX, 0, false),
+            Some(before_signature) => {
+                match hbase.get_bincode_cell("tx", before_signature.to_string()).await {
+                    Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
+                    Err(hbase::Error::RowNotFound) => {
+                        match self.get_full_transaction(before_signature).await? {
+                            Some(full_transaction) => (full_transaction.slot, 0, true),
+                            None => return Ok(vec![]),
+                        }
+                    },
+                    Err(err) => return Err(err.into()),
+                }
+            }
+        };
+
+        debug!("Got starting slot: {:?}, index: {:?}, using tx_full fallback: {:?}",
+            first_slot.clone(),
+            before_transaction_index.clone(),
+            before_fallback
+        );
+
+        debug!("Got ending slot: {:?}, index: {:?}, using tx_full fallback: {:?}",
+            last_slot.clone(),
+            until_transaction_index.clone(),
+            until_fallback
+        );
+
+        let mut infos = vec![];
+
+        debug!("Getting the starting slot length from tx-by-addr");
+
+        let starting_slot_tx_len = hbase
+            .get_protobuf_or_bincode_cell::<Vec<LegacyTransactionByAddrInfo>, tx_by_addr::TransactionByAddr>(
+                "tx-by-addr",
+                format!("{}{}", address_prefix, slot_to_tx_by_addr_key(first_slot)),
+            )
+            .await
+            .map(|cell_data| {
+                match cell_data {
+                    hbase::CellData::Bincode(tx_by_addr) => tx_by_addr.len(),
+                    hbase::CellData::Protobuf(tx_by_addr) => tx_by_addr.tx_by_addrs.len(),
+                }
+            })
+            .unwrap_or(0);
+
+        debug!("Got starting slot tx len: {:?}", starting_slot_tx_len);
+
+        let tx_by_addr_data = hbase
+            .get_row_data(
+                "tx-by-addr",
+                Some(format!(
+                    "{}{}",
+                    address_prefix,
+                    slot_to_tx_by_addr_key(first_slot),
+                )),
+                Some(format!(
+                    "{}{}",
+                    address_prefix,
+                    slot_to_tx_by_addr_key(last_slot.saturating_add(1)),
+                )),
+                limit as i64 + starting_slot_tx_len as i64,
+                true, // reversed = true for forward search
+            )
+            .await?;
+
+        debug!("Loaded {:?} tx-by-addr entries", tx_by_addr_data.len());
+
+        'outer: for (row_key, data) in tx_by_addr_data {
+            let slot = !key_to_slot(&row_key[address_prefix.len()..]).ok_or_else(|| {
+                hbase::Error::ObjectCorrupt(format!(
+                    "Failed to convert key to slot: tx-by-addr/{row_key}"
+                ))
+            })?;
+
+            debug!("Deserializing tx-by-addr result data");
+
+            let deserialized_cell_data = hbase::deserialize_protobuf_or_bincode_cell_data::<
+                Vec<LegacyTransactionByAddrInfo>,
+                tx_by_addr::TransactionByAddr,
+            >(&data, "tx-by-addr", row_key.clone())?;
+
+            let cell_data: Vec<TransactionByAddrInfo> = match deserialized_cell_data {
+                hbase::CellData::Bincode(tx_by_addr) => {
+                    tx_by_addr.into_iter().map(|legacy| legacy.into()).collect()
+                }
+                hbase::CellData::Protobuf(tx_by_addr) => {
+                    tx_by_addr.try_into().map_err(|error| {
+                        hbase::Error::ObjectCorrupt(format!(
+                            "Failed to deserialize: {}: tx-by-addr/{}",
+                            error,
+                            row_key.clone()
+                        ))
+                    })?
+                }
+            };
+
+            debug!("Filtering the result data");
+
+            for tx_by_addr_info in cell_data.into_iter() {
+                debug!("Checking result [slot: {:?}, index: {:?}], signature: {:?}", slot, tx_by_addr_info.index, tx_by_addr_info.signature);
+
+                if !before_fallback && slot == first_slot && tx_by_addr_info.index <= before_transaction_index {
+                    debug!("Skipping transaction before [slot: {:?}, index: {:?}], signature: {:?}", slot, tx_by_addr_info.index, tx_by_addr_info.signature);
+                    continue;
+                }
+
+                if !until_fallback && slot == last_slot && tx_by_addr_info.index >= until_transaction_index {
+                    debug!("Skipping transaction until [slot: {:?}, index: {:?}], signature: {:?}", slot, tx_by_addr_info.index, tx_by_addr_info.signature);
+                    continue;
+                }
+
+                infos.push((
+                    ConfirmedTransactionStatusWithSignature {
+                        signature: tx_by_addr_info.signature,
+                        slot,
+                        err: tx_by_addr_info.err,
+                        memo: tx_by_addr_info.memo,
+                        block_time: tx_by_addr_info.block_time,
+                    },
+                    tx_by_addr_info.index,
+                ));
+
+                debug!("Checking the limit: {:?}/{:?}", infos.len(), limit);
+                if infos.len() >= limit {
+                    debug!("Limit was reached, exiting loop");
+                    break 'outer;
+                }
+            }
+        }
+
+        debug!("Returning {:?} result entries", infos.len());
+
+        Ok(infos)
+    }
+
+    async fn get_signatures_backward(
         &self,
         address: &Pubkey,
         before_signature: Option<&Signature>,
@@ -924,6 +1126,7 @@ impl LedgerStorageAdapter for LedgerStorage {
                     slot_to_tx_by_addr_key(last_slot.saturating_sub(1)),
                 )),
                 limit as i64 + starting_slot_tx_len as i64,
+                false
             )
             .await?;
 

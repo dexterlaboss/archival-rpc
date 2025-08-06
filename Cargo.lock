@@ -3016,7 +3016,7 @@ dependencies = [
 
 [[package]]
 name = "proto"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "protobuf-src",
  "tonic-build",
@@ -4310,7 +4310,7 @@ dependencies = [
 
 [[package]]
 name = "solana-metrics"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "prometheus",
 ]
@@ -4332,7 +4332,7 @@ checksum = "33e9de00960197412e4be3902a6cd35e60817c511137aca6c34c66cd5d4017ec"
 
 [[package]]
 name = "solana-net-utils"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "url 2.5.4",
 ]
@@ -4362,7 +4362,7 @@ dependencies = [
 
 [[package]]
 name = "solana-perf"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "caps",
  "libc",
@@ -4643,7 +4643,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "bzip2",
  "clap",
@@ -4985,7 +4985,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-adapter"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "async-trait",
  "bincode",
@@ -5013,7 +5013,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-bigtable"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "async-trait",
  "backoff",
@@ -5052,7 +5052,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-hbase"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -5095,7 +5095,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-proto"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "bincode",
  "bs58 0.4.0",

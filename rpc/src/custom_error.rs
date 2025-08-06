@@ -1,6 +1,7 @@
 //! Implementation defined RPC server errors
 use {
     jsonrpc_core::{Error, ErrorCode},
+    serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_transaction_status_client_types::{
         EncodeError,
@@ -16,6 +17,9 @@ pub const JSON_RPC_SCAN_ERROR: i64 = -32012;
 pub const JSON_RPC_SERVER_ERROR_UNSUPPORTED_TRANSACTION_VERSION: i64 = -32015;
 
 pub const JSON_RPC_HBASE_ERROR: i64 = -32017;
+pub const JSON_RPC_SERVER_ERROR_SLOT_NOT_EPOCH_BOUNDARY: i64 = -32018;
+pub const JSON_RPC_SERVER_ERROR_EPOCH_REWARDS_PERIOD_ACTIVE: i64 = -32019;
+pub const JSON_RPC_SERVER_ERROR_METHOD_NOT_SUPPORTED: i64 = -32020;
 
 #[derive(Error, Debug)]
 pub enum RpcCustomError {
@@ -32,7 +36,17 @@ pub enum RpcCustomError {
     #[error("UnsupportedTransactionVersion")]
     UnsupportedTransactionVersion(u8),
     #[error("HBaseError")]
-    HBaseError { message: String }
+    HBaseError { message: String },
+    #[error("SlotNotEpochBoundary")]
+    SlotNotEpochBoundary { slot: Slot },
+    #[error("EpochRewardsPeriodActive")]
+    EpochRewardsPeriodActive {
+        slot: Slot,
+        current_block_height: u64,
+        rewards_complete_block_height: u64,
+    },
+    #[error("MethodNotSupported")]
+    MethodNotSupported(String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -98,6 +112,27 @@ impl From<RpcCustomError> for Error {
             },
             RpcCustomError::HBaseError { message } => Self {
                 code: ErrorCode::ServerError(JSON_RPC_HBASE_ERROR),
+                message,
+                data: None,
+            },
+            RpcCustomError::SlotNotEpochBoundary { slot } => Self {
+                code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_SLOT_NOT_EPOCH_BOUNDARY),
+                message: format!("Slot {slot} is not an epoch boundary"),
+                data: None,
+            },
+            RpcCustomError::EpochRewardsPeriodActive {
+                slot,
+                current_block_height,
+                rewards_complete_block_height,
+            } => Self {
+                code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_EPOCH_REWARDS_PERIOD_ACTIVE),
+                message: format!(
+                    "Epoch rewards period is active. Slot: {slot}, current block height: {current_block_height}, rewards will be complete at block height: {rewards_complete_block_height}"
+                ),
+                data: None,
+            },
+            RpcCustomError::MethodNotSupported(message) => Self {
+                code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_METHOD_NOT_SUPPORTED),
                 message,
                 data: None,
             },

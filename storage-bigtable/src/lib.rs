@@ -866,6 +866,10 @@ impl LedgerStorageAdapter for LedgerStorage {
         // Placeholder implementation
         Err(Error::BlockNotFound(slot))
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 #[cfg(test)]

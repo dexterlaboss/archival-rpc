@@ -4,6 +4,7 @@ use {
             JsonRpcRequestProcessor,
             RpcBlockCheck,
             verify_signature,
+            verify_pubkey,
             verify_and_parse_signatures_for_address_params,
         },
         deprecated::*,
@@ -22,12 +23,13 @@ use {
             RpcTransactionConfig,
             RpcBlockConfig,
             RpcSignatureStatusConfig,
+            RpcEpochConfig,
 
         },
         request::{
             MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS,
         },
-        response::{Response as RpcResponse, *},
+        response::{Response as RpcResponse, RpcInflationReward, *},
     },
     solana_clock::{
         Slot,
@@ -36,9 +38,11 @@ use {
     solana_commitment_config::{
         CommitmentConfig,
     },
+    solana_epoch_schedule::EpochSchedule,
     solana_signature::{
         Signature,
     },
+    solana_pubkey::Pubkey,
     solana_transaction_status_client_types::{
         EncodedConfirmedTransactionWithStatusMeta,
         TransactionStatus,
@@ -73,6 +77,13 @@ pub mod storage_rpc_minimal {
 
         #[rpc(meta, name = "getSlot")]
         fn get_slot(&self, meta: Self::Metadata, config: Option<RpcContextConfig>) -> BoxFuture<Result<Slot>>;
+
+        #[rpc(meta, name = "getBlockHeight")]
+        fn get_block_height(
+            &self,
+            meta: Self::Metadata,
+            config: Option<RpcContextConfig>,
+        ) -> BoxFuture<Result<u64>>;
     }
 
     pub struct MinimalImpl;
@@ -95,6 +106,15 @@ pub mod storage_rpc_minimal {
         fn get_slot(&self, meta: Self::Metadata, config: Option<RpcContextConfig>) -> BoxFuture<Result<Slot>> {
             info!("getSlot request received");
             Box::pin(async move { Ok(meta.get_slot(config.unwrap_or_default()).await) })
+        }
+
+        fn get_block_height(
+            &self,
+            meta: Self::Metadata,
+            config: Option<RpcContextConfig>,
+        ) -> BoxFuture<Result<u64>> {
+            info!("getBlockHeight request received");
+            Box::pin(async move { meta.get_block_height(config.unwrap_or_default()).await })
         }
     }
 }
@@ -176,6 +196,17 @@ pub mod storage_rpc_full {
 
         #[rpc(meta, name = "getFirstAvailableBlock")]
         fn get_first_available_block(&self, meta: Self::Metadata) -> BoxFuture<Result<Slot>>;
+
+        #[rpc(meta, name = "getInflationReward")]
+        fn get_inflation_reward(
+            &self,
+            meta: Self::Metadata,
+            addresses: Vec<String>,
+            config: Option<RpcEpochConfig>,
+        ) -> BoxFuture<Result<Vec<Option<RpcInflationReward>>>>;
+
+        #[rpc(meta, name = "getEpochSchedule")]
+        fn get_epoch_schedule(&self, meta: Self::Metadata) -> BoxFuture<Result<EpochSchedule>>;
     }
 
     pub struct FullImpl;
@@ -327,6 +358,30 @@ pub mod storage_rpc_full {
         fn get_first_available_block(&self, meta: Self::Metadata) -> BoxFuture<Result<Slot>> {
             info!("getFirstAvailableBlock request received");
             Box::pin(async move { Ok(meta.get_first_available_block().await) })
+        }
+
+        fn get_inflation_reward(
+            &self,
+            meta: Self::Metadata,
+            addresses: Vec<String>,
+            config: Option<RpcEpochConfig>,
+        ) -> BoxFuture<Result<Vec<Option<RpcInflationReward>>>> {
+            info!("getInflationReward request received: {:?} addresses", addresses.len());
+            Box::pin(async move {
+                let pubkeys: Result<Vec<Pubkey>> = addresses
+                    .into_iter()
+                    .map(|address| verify_pubkey(&address))
+                    .collect();
+                match pubkeys {
+                    Ok(pubkeys) => meta.get_inflation_reward(pubkeys, config).await,
+                    Err(err) => Err(err),
+                }
+            })
+        }
+
+        fn get_epoch_schedule(&self, meta: Self::Metadata) -> BoxFuture<Result<EpochSchedule>> {
+            info!("getEpochSchedule request received");
+            Box::pin(async move { meta.get_epoch_schedule() })
         }
     }
 }
@@ -576,8 +631,7 @@ pub mod tests {
                 validator_exit,
                 None,
                 None,
-            )
-                .0;
+            );
 
             let mut io = MetaIoHandler::default();
             io.extend_with(storage_rpc_minimal::MinimalImpl.to_delegate());

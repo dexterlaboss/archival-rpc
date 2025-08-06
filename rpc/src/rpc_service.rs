@@ -29,6 +29,7 @@ use {
     solana_validator_exit::{
         Exit,
     },
+
     std::{
         net::SocketAddr,
         path::{
@@ -92,6 +93,7 @@ impl JsonRpcService {
                             enable_full_tx_cache,
                             disable_tx_fallback,
                             ref cache_address,
+                            use_hbase_blocks_meta,
                             ..
                         }) = config.rpc_hbase_config
             {
@@ -108,6 +110,7 @@ impl JsonRpcService {
                     enable_full_tx_cache,
                     disable_tx_fallback,
                     cache_address: cache_address.clone(),
+                    use_hbase_blocks_meta,
                 };
                 runtime
                     .block_on(solana_storage_hbase::LedgerStorage::new_with_config(hbase_config, metrics.clone()))
@@ -136,6 +139,7 @@ impl JsonRpcService {
                             hash_tx_full_row_keys,
                             enable_full_tx_cache,
                             ref cache_address,
+                            use_hbase_blocks_meta,
                             ..
                         }) = config.rpc_hbase_config
             {
@@ -153,6 +157,7 @@ impl JsonRpcService {
                         enable_full_tx_cache,
                         disable_tx_fallback: false,
                         cache_address: cache_address.clone(),
+                        use_hbase_blocks_meta,
                     };
                     runtime
                         .block_on(solana_storage_hbase::LedgerStorage::new_with_config(fallback_config, metrics.clone()))

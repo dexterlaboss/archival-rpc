@@ -7,6 +7,7 @@ use {
     jsonrpc_core::{
         Error, Metadata, Result
     },
+    solana_storage_adapter::LedgerStorageAdapter,
     solana_rpc_client_api::{
         config::*,
         request::{
@@ -43,11 +44,23 @@ use {
         TransactionStatus,
         UiConfirmedBlock,
         UiTransactionEncoding,
+        Reward,
     },
+    solana_rpc_client_api::{
+        config::RpcEpochConfig,
+        response::RpcInflationReward,
+    },
+    solana_epoch_schedule::EpochSchedule,
+    solana_genesis_config::GenesisConfig,
+    solana_hash::Hash,
+    solana_reward_info::RewardType,
+    solana_epoch_rewards_hasher::EpochRewardsHasher,
     std::{
         collections::{
-            HashSet
+            HashSet,
+            HashMap,
         },
+        str::FromStr,
         sync::{
             Arc,
             RwLock,
@@ -61,6 +74,9 @@ use {
 };
 
 pub const MAX_REQUEST_BODY_SIZE: usize = 50 * (1 << 10); // 50kB
+pub const MAX_GENESIS_ARCHIVE_UNPACKED_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+
+type Rewards = Vec<Reward>;
 
 pub(crate) fn verify_and_parse_signatures_for_address_params(
     address: String,
@@ -128,6 +144,7 @@ pub struct JsonRpcConfig {
     pub obsolete_v1_7_api: bool,
     pub max_request_body_size: Option<usize>,
     pub max_get_blocks_range: Option<u64>,
+    pub genesis_config_path: Option<String>,
 }
 
 impl JsonRpcConfig {
@@ -154,6 +171,7 @@ pub struct RpcHBaseConfig {
     pub enable_full_tx_cache: bool,
     pub disable_tx_fallback: bool,
     pub cache_address: Option<String>,
+    pub use_hbase_blocks_meta: bool,
 }
 
 impl Default for RpcHBaseConfig {
@@ -175,6 +193,7 @@ impl Default for RpcHBaseConfig {
             enable_full_tx_cache: false,
             disable_tx_fallback: false,
             cache_address: None,
+            use_hbase_blocks_meta: false,
         }
     }
 }
@@ -186,6 +205,7 @@ pub struct JsonRpcRequestProcessor {
     rpc_service_exit: Arc<RwLock<Exit>>,
     hbase_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
     fallback_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
+    genesis_config: Option<GenesisConfig>,
 }
 
 impl Metadata for JsonRpcRequestProcessor {}
@@ -197,6 +217,7 @@ impl Clone for JsonRpcRequestProcessor {
             rpc_service_exit: Arc::clone(&self.rpc_service_exit),
             hbase_ledger_storage: self.hbase_ledger_storage.as_ref().map(|storage| storage.clone_box()),
             fallback_ledger_storage: self.fallback_ledger_storage.as_ref().map(|storage| storage.clone_box()),
+            genesis_config: self.genesis_config.clone(),
         }
     }
 }
@@ -216,11 +237,32 @@ impl JsonRpcRequestProcessor {
     ) -> Self {
     // ) -> (Self, Receiver<TransactionInfo>) {
     //     let (_sender, receiver) = unbounded();
+        // Load genesis config if path is provided
+        let genesis_config = if let Some(ref path) = config.genesis_config_path {
+            match crate::genesis_unpack::open_genesis_config(
+                &std::path::Path::new(path),
+                MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+            ) {
+                Ok(config) => {
+                    info!("Successfully loaded genesis config from: {}", path);
+                    Some(config)
+                }
+                Err(err) => {
+                    warn!("Failed to load genesis config from {}: {}. getInflationReward method will be unavailable.", path, err);
+                    None
+                }
+            }
+        } else {
+            info!("No genesis config path provided. getInflationReward method will be unavailable.");
+            None
+        };
+
         Self {
             config,
             rpc_service_exit,
             hbase_ledger_storage,
             fallback_ledger_storage,
+            genesis_config,
         }
         // (
         //     Self {
@@ -343,6 +385,16 @@ impl JsonRpcRequestProcessor {
         }
 
         if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
+            // Check if MD5 salt is enabled but blocks_meta is not - return error
+            if let Some(hbase_config) = &self.config.rpc_hbase_config {
+                if hbase_config.use_md5_row_key_salt && !hbase_config.use_hbase_blocks_meta {
+                    return Err(Error::invalid_params(
+                        "get_blocks is not supported with MD5 row key salt unless --use-hbase-blocks-meta is enabled"
+                            .to_string(),
+                    ));
+                }
+            }
+
             return hbase_ledger_storage
                 .get_confirmed_blocks(start_slot, (end_slot.unwrap() - start_slot) as usize + 1) // increment limit by 1 to ensure returned range is inclusive of both start_slot and end_slot
                 .await
@@ -384,6 +436,16 @@ impl JsonRpcRequestProcessor {
         }
 
         if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
+            // Check if MD5 salt is enabled but blocks_meta is not - return error
+            if let Some(hbase_config) = &self.config.rpc_hbase_config {
+                if hbase_config.use_md5_row_key_salt && !hbase_config.use_hbase_blocks_meta {
+                    return Err(Error::invalid_params(
+                        "get_blocks_with_limit is not supported with MD5 row key salt unless --use-hbase-blocks-meta is enabled"
+                            .to_string(),
+                    ));
+                }
+            }
+
             return Ok(hbase_ledger_storage
                 .get_confirmed_blocks(start_slot, limit)
                 .await
@@ -400,6 +462,22 @@ impl JsonRpcRequestProcessor {
         }
 
         if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
+            // Check if we should use blocks_meta table for efficient metadata lookup
+            if let Some(hbase_config) = &self.config.rpc_hbase_config {
+                if hbase_config.use_hbase_blocks_meta {
+                    // Cast to concrete type to access blocks_meta methods
+                    if let Some(hbase_storage) = hbase_ledger_storage.as_any().downcast_ref::<solana_storage_hbase::LedgerStorage>() {
+                        match hbase_storage.get_block_time(slot).await {
+                            Ok(Some(block_time)) => return Ok(Some(block_time)),
+                            Ok(None) => return Ok(None),
+                            Err(solana_storage_adapter::Error::BlockNotFound(_)) => return Ok(None),
+                            Err(err) => return Err(RpcCustomError::HBaseError { message: err.to_string() }.into()),
+                        }
+                    }
+                }
+            }
+
+            // Fall back to legacy method (reading full block)
             let hbase_result = hbase_ledger_storage.get_confirmed_block(slot, false).await;
             self.check_hbase_result(&hbase_result)?;
             return Ok(hbase_result
@@ -586,7 +664,272 @@ impl JsonRpcRequestProcessor {
         }
         Slot::default()
     }
+
+    pub async fn get_block_height(&self, _config: RpcContextConfig) -> Result<u64> {
+        if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
+            // Check if we should use blocks_meta table for efficient metadata lookup
+            if let Some(hbase_config) = &self.config.rpc_hbase_config {
+                if hbase_config.use_hbase_blocks_meta {
+                    // Cast to concrete type to access blocks_meta methods
+                    if let Some(hbase_storage) = hbase_ledger_storage.as_any().downcast_ref::<solana_storage_hbase::LedgerStorage>() {
+                        // Get latest slot using blocks_meta table
+                        if let Ok(latest_slot) = hbase_storage.get_latest_stored_slot().await {
+                            if latest_slot == 0 {
+                                return Ok(0);
+                            }
+                            // Try to get actual block height from metadata
+                            match hbase_storage.get_block_height(latest_slot).await {
+                                Ok(Some(block_height)) => return Ok(block_height),
+                                Ok(None) => return Ok(latest_slot), // fallback to slot as block height
+                                Err(_) => return Ok(latest_slot), // fallback to slot as block height
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fall back to using latest slot as block height
+            if let Ok(latest_slot) = hbase_ledger_storage.get_latest_stored_slot().await {
+                return Ok(latest_slot);
+            }
+        }
+        Ok(0)
+    }
+
+    pub fn get_epoch_schedule(&self) -> Result<EpochSchedule> {
+        match &self.genesis_config {
+            Some(genesis_config) => Ok(genesis_config.epoch_schedule.clone()),
+            None => Err(RpcCustomError::MethodNotSupported("Method not supported".to_string()).into()),
+        }
+    }
+
+    pub async fn get_inflation_reward(
+        &self,
+        addresses: Vec<Pubkey>,
+        config: Option<RpcEpochConfig>,
+    ) -> Result<Vec<Option<RpcInflationReward>>> {
+        // Check if genesis config is available
+        if self.genesis_config.is_none() {
+            return Err(RpcCustomError::MethodNotSupported("Method not supported".to_string()).into());
+        }
+
+        let config = config.unwrap_or_default();
+        let epoch_schedule = self.get_epoch_schedule()?;
+        let first_available_block = self.get_first_available_block().await;
+        let context_config = RpcContextConfig {
+            commitment: config.commitment,
+            min_context_slot: config.min_context_slot,
+        };
+        let epoch = match config.epoch {
+            Some(epoch) => epoch,
+            None => epoch_schedule
+                .get_epoch(self.get_slot(context_config).await)
+                .saturating_sub(1),
+        };
+
+        // Rewards for this epoch are found in the first confirmed block of the next epoch
+        let first_slot_in_epoch = epoch_schedule.get_first_slot_in_epoch(epoch.saturating_add(1));
+        if first_slot_in_epoch < first_available_block {
+            return Err(RpcCustomError::LongTermStorageSlotSkipped {
+                slot: first_slot_in_epoch,
+            }
+            .into());
+        }
+
+        let first_confirmed_block_in_epoch = *self
+            .get_blocks_with_limit(first_slot_in_epoch, 1, context_config.commitment)
+            .await?
+            .first()
+            .ok_or(RpcCustomError::BlockNotAvailable {
+                slot: first_slot_in_epoch,
+            })?;
+
+        // Get first block in the epoch
+        let epoch_boundary_block = match self
+            .get_block(
+                first_confirmed_block_in_epoch,
+                Some(RpcBlockConfig::rewards_with_commitment(Some(context_config.commitment.unwrap_or_default())).into()),
+            )
+            .await?
+        {
+            Some(block) => block,
+            None => {
+                return Err(RpcCustomError::BlockNotAvailable {
+                    slot: first_confirmed_block_in_epoch,
+                }
+                .into());
+            }
+        };
+
+        // If there is a gap in blockstore or long-term historical storage that
+        // includes the epoch boundary, the `get_blocks_with_limit()` call above
+        // will return the slot of the block at the end of that gap, not a
+        // legitimate epoch-boundary block. Therefore, verify that the parent of
+        // `epoch_boundary_block` occurred before the `first_slot_in_epoch`. If
+        // it didn't, return an error; it will be impossible to locate
+        // rewards properly.
+        if epoch_boundary_block.parent_slot >= first_slot_in_epoch {
+            return Err(RpcCustomError::SlotNotEpochBoundary {
+                slot: first_confirmed_block_in_epoch,
+            }
+            .into());
+        }
+
+        let epoch_has_partitioned_rewards = epoch_boundary_block.num_reward_partitions.is_some();
+
+        // Collect rewards from first block in the epoch if partitioned epoch
+        // rewards not enabled, or address is a vote account
+        let mut reward_map: HashMap<String, (Reward, Slot)> = {
+            let addresses: Vec<String> =
+                addresses.iter().map(|pubkey| pubkey.to_string()).collect();
+            Self::filter_map_rewards(
+                &epoch_boundary_block.rewards,
+                first_confirmed_block_in_epoch,
+                &addresses,
+                &|reward_type| -> bool {
+                    reward_type == RewardType::Voting
+                        || (!epoch_has_partitioned_rewards && reward_type == RewardType::Staking)
+                },
+            )
+        };
+
+        // Append stake account rewards from partitions if partitions epoch
+        // rewards is enabled
+        if epoch_has_partitioned_rewards {
+            let num_partitions = epoch_boundary_block.num_reward_partitions.expect(
+                "epoch-boundary block should have num_reward_partitions for epochs with \
+                 partitioned rewards enabled",
+            );
+
+            let num_partitions = usize::try_from(num_partitions)
+                .expect("num_partitions should never exceed usize::MAX");
+            let hasher = EpochRewardsHasher::new(
+                num_partitions,
+                &Hash::from_str(&epoch_boundary_block.previous_blockhash)
+                    .expect("UiConfirmedBlock::previous_blockhash should be properly formed"),
+            );
+            let mut partition_index_addresses: HashMap<usize, Vec<String>> = HashMap::new();
+            for address in addresses.iter() {
+                let address_string = address.to_string();
+                // Skip this address if (Voting) rewards were already found in
+                // the first block of the epoch
+                if !reward_map.contains_key(&address_string) {
+                    let partition_index = hasher.clone().hash_address_to_partition(address);
+                    partition_index_addresses
+                        .entry(partition_index)
+                        .and_modify(|list| list.push(address_string.clone()))
+                        .or_insert(vec![address_string]);
+                }
+            }
+
+            let block_list = self
+                .get_blocks_with_limit(
+                    first_confirmed_block_in_epoch + 1,
+                    num_partitions,
+                    context_config.commitment,
+                )
+                .await?;
+
+            for (partition_index, addresses) in partition_index_addresses.iter() {
+                let slot = match block_list.get(*partition_index) {
+                    Some(slot) => *slot,
+                    None => {
+                        // If block_list.len() too short to contain
+                        // partition_index, the epoch rewards period must be
+                        // currently active.
+                        let latest_slot = self.get_slot(context_config).await;
+                        let current_block_height = self.get_block_height(context_config).await.unwrap_or(latest_slot);
+                        let rewards_complete_block_height = epoch_boundary_block
+                            .block_height
+                            .map(|block_height| {
+                                block_height
+                                    .saturating_add(num_partitions as u64)
+                                    .saturating_add(1)
+                            })
+                            .expect(
+                                "every block after partitioned_epoch_reward_enabled should have a \
+                                 populated block_height",
+                            );
+                        return Err(RpcCustomError::EpochRewardsPeriodActive {
+                            slot: latest_slot,
+                            current_block_height,
+                            rewards_complete_block_height,
+                        }.into());
+                    }
+                };
+
+                let block = match self
+                    .get_block(
+                        slot,
+                        Some(RpcBlockConfig::rewards_with_commitment(context_config.commitment).into()),
+                    )
+                    .await?
+                {
+                    Some(block) => block,
+                    None => {
+                        return Err(RpcCustomError::BlockNotAvailable { slot }.into());
+                    }
+                };
+
+                let index_reward_map = Self::filter_map_rewards(
+                    &block.rewards,
+                    slot,
+                    addresses,
+                    &|reward_type| -> bool { reward_type == RewardType::Staking },
+                );
+                reward_map.extend(index_reward_map);
+            }
+        }
+
+        let rewards = addresses
+            .iter()
+            .map(|address| {
+                if let Some((reward, slot)) = reward_map.get(&address.to_string()) {
+                    return Some(RpcInflationReward {
+                        epoch,
+                        effective_slot: *slot,
+                        amount: reward.lamports.unsigned_abs(),
+                        post_balance: reward.post_balance,
+                        commission: reward.commission,
+                    });
+                }
+                None
+            })
+            .collect();
+
+        Ok(rewards)
+    }
+
+    fn filter_map_rewards<'a, F>(
+        rewards: &'a Option<Rewards>,
+        slot: Slot,
+        addresses: &'a [String],
+        reward_type_filter: &'a F,
+    ) -> HashMap<String, (Reward, Slot)>
+    where
+        F: Fn(RewardType) -> bool,
+    {
+        Self::filter_rewards(rewards, reward_type_filter)
+            .filter(|reward| addresses.contains(&reward.pubkey))
+            .map(|reward| (reward.pubkey.clone(), (reward.clone(), slot)))
+            .collect()
+    }
+
+    fn filter_rewards<'a, F>(
+        rewards: &'a Option<Rewards>,
+        reward_type_filter: &'a F,
+    ) -> impl Iterator<Item = &'a Reward>
+    where
+        F: Fn(RewardType) -> bool,
+    {
+        rewards
+            .iter()
+            .flatten()
+            .filter(move |reward| reward.reward_type.is_some_and(reward_type_filter))
+    }
 }
+
+
 
 
 

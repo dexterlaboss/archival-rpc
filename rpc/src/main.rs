@@ -165,6 +165,7 @@ fn main() {
         } else {
             None
         },
+        use_hbase_blocks_meta: matches.is_present("use_hbase_blocks_meta"),
     });
 
     builder.rpc_port(rpc_port);
@@ -190,6 +191,7 @@ fn main() {
         } else {
             None
         },
+        genesis_config_path: matches.value_of("genesis_config_path").map(|s| s.to_string()),
         ..JsonRpcConfig::default_for_storage_rpc()
     });
 

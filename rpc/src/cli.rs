@@ -335,6 +335,19 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .takes_value(true)
                 .help("Block transaction cache server address"),
         )
+        .arg(
+            Arg::with_name("use_hbase_blocks_meta")
+                .long("use-hbase-blocks-meta")
+                .takes_value(false)
+                .help("Use HBase blocks_meta table for block metadata queries instead of blocks table"),
+        )
+        .arg(
+            Arg::with_name("genesis_config_path")
+                .long("genesis-config-path")
+                .value_name("PATH")
+                .takes_value(true)
+                .help("Path to the genesis config directory. Required for getInflationReward and getEpochSchedule RPC methods"),
+        )
     ;
 }
 

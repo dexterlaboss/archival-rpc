@@ -501,6 +501,9 @@ pub trait LedgerStorageAdapter: Send + Sync {
 
     /// Fetch the confirmed block from the desired slot
     async fn get_confirmed_block_from_legacy_storage(&self, slot: Slot, _use_cache: bool) -> Result<ConfirmedBlock>;
+
+    /// For downcasting to concrete implementations
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 #[cfg(test)]

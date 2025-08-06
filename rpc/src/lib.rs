@@ -37,6 +37,8 @@ pub mod input_validators;
 
 pub mod deprecated;
 
+pub mod genesis_unpack;
+
 #[cfg(test)]
 #[macro_use]
 extern crate matches;

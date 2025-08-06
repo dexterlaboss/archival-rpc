@@ -228,6 +228,7 @@ pub struct LedgerStorageConfig {
     pub enable_full_tx_cache: bool,
     pub disable_tx_fallback: bool,
     pub cache_address: Option<String>,
+    pub use_hbase_blocks_meta: bool,
 }
 
 impl Default for LedgerStorageConfig {
@@ -245,6 +246,7 @@ impl Default for LedgerStorageConfig {
             enable_full_tx_cache: false,
             disable_tx_fallback: false,
             cache_address: Some(DEFAULT_ADDRESS.to_string()),
+            use_hbase_blocks_meta: false,
         }
     }
 }
@@ -262,6 +264,7 @@ pub struct LedgerStorage {
     disable_tx_fallback: bool,
     metrics: Arc<Metrics>,
     use_block_car_files: bool,
+    use_hbase_blocks_meta: bool,
 }
 
 impl LedgerStorage {
@@ -293,6 +296,7 @@ impl LedgerStorage {
             enable_full_tx_cache,
             disable_tx_fallback,
             cache_address,
+            use_hbase_blocks_meta,
         } = config;
 
         let connection = hbase::HBaseConnection::new(
@@ -355,6 +359,7 @@ impl LedgerStorage {
             disable_tx_fallback,
             metrics,
             use_block_car_files: false,
+            use_hbase_blocks_meta,
         })
     }
 
@@ -384,6 +389,58 @@ impl LedgerStorage {
         );
         Ok(path)
     }
+
+    /// Get block metadata from blocks_meta table for a specific slot
+    async fn get_block_metadata(&self, slot: Slot) -> Result<StoredCarIndexEntry> {
+        let mut hbase = self.connection.client();
+        
+        let index_cell_data = hbase
+            .get_protobuf_or_bincode_cell::<StoredCarIndexEntry, car_index::CarIndexEntry>(
+                "blocks_meta",
+                slot_to_blocks_key(slot, false), // Always false for blocks_meta
+            )
+            .await
+            .map_err(|err| match err {
+                hbase::Error::RowNotFound => Error::BlockNotFound(slot),
+                other => Error::StorageBackendError(Box::new(other)),
+            })?;
+
+        let index_entry: StoredCarIndexEntry = match index_cell_data {
+            hbase::CellData::Bincode(entry) => entry.into(),
+            hbase::CellData::Protobuf(entry) => entry.try_into().map_err(|_err| {
+                error!("Protobuf object is corrupted for slot {}", slot);
+                hbase::Error::ObjectCorrupt(format!("blocks_meta/{}", slot_to_blocks_key(slot, false)))
+            })?,
+        };
+
+        Ok(index_entry)
+    }
+
+    /// Get block time from blocks_meta table
+    pub async fn get_block_time(&self, slot: Slot) -> Result<Option<i64>> {
+        if slot == 0 {
+            return Ok(Some(0)); // Genesis time
+        }
+
+        match self.get_block_metadata(slot).await {
+            Ok(metadata) => Ok(metadata.block_time),
+            Err(Error::BlockNotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Get block height from blocks_meta table
+    pub async fn get_block_height(&self, slot: Slot) -> Result<Option<u64>> {
+        if slot == 0 {
+            return Ok(Some(0)); // Genesis height
+        }
+
+        match self.get_block_metadata(slot).await {
+            Ok(metadata) => Ok(metadata.block_height),
+            Err(Error::BlockNotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
 }
 
 #[async_trait]
@@ -391,6 +448,19 @@ impl LedgerStorageAdapter for LedgerStorage {
     /// Return the available slot that contains a block
     async fn get_first_available_block(&self) -> Result<Option<Slot>> {
         debug!("LedgerStorage::get_first_available_block request received");
+
+        // Check if we should use blocks_meta table
+        if self.use_hbase_blocks_meta {
+            let mut hbase = self.connection.client();
+            // blocks_meta table does not use MD5 salt for its row keys
+            let row_keys = hbase
+                .get_row_keys("blocks_meta", None, None, 1, false)
+                .await?;
+            if let Some(first_row_key) = row_keys.first() {
+                return Ok(key_to_slot(first_row_key));
+            }
+            return Ok(None);
+        }
 
         if self.use_md5_row_key_salt {
             return Ok(Some(0));
@@ -414,6 +484,27 @@ impl LedgerStorageAdapter for LedgerStorage {
             "LedgerStorage::get_confirmed_blocks request received: {:?} {:?}",
             start_slot, limit
         );
+
+        // Check if we should use blocks_meta table
+        if self.use_hbase_blocks_meta {
+            let mut hbase = self.connection.client();
+            // blocks_meta table does not use MD5 salt for its row keys
+            let start_key = slot_to_blocks_key(start_slot, false);
+            let row_keys = hbase
+                .get_row_keys(
+                    "blocks_meta",
+                    Some(start_key),
+                    None, // go to end
+                    limit as i64,
+                    false, // not reversed
+                )
+                .await?;
+            
+            return Ok(row_keys
+                .into_iter()
+                .filter_map(|key| key_to_slot(&key))
+                .collect());
+        }
 
         if self.use_md5_row_key_salt {
             return Ok(vec![]);
@@ -1205,6 +1296,25 @@ impl LedgerStorageAdapter for LedgerStorage {
     }
 
     async fn get_latest_stored_slot(&self) -> Result<Slot> {
+        // Check if we should use blocks_meta table
+        if self.use_hbase_blocks_meta {
+            let mut hbase = self.connection.client();
+            // blocks_meta table does not use MD5 salt for its row keys
+            match hbase.get_last_row_key("blocks_meta").await {
+                Ok(last_row_key) => {
+                    match key_to_slot(&last_row_key) {
+                        Some(slot) => return Ok(slot),
+                        None => return Err(Error::StorageBackendError(Box::new(hbase::Error::ObjectCorrupt(format!(
+                            "Failed to parse row key '{}' as slot number",
+                            last_row_key
+                        ))))),
+                    }
+                },
+                Err(hbase::Error::RowNotFound) => return Ok(0),
+                Err(e) => return Err(Error::StorageBackendError(Box::new(e))),
+            }
+        }
+
         // inc_new_counter_debug!("storage-hbase-query", 1);
         let mut hbase = self.connection.client();
         match hbase.get_last_row_key("blocks").await {
@@ -1353,6 +1463,10 @@ impl LedgerStorageAdapter for LedgerStorage {
 
     fn clone_box(&self) -> Box<dyn LedgerStorageAdapter> {
         Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

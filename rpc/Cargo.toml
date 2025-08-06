@@ -54,6 +54,13 @@ solana-net-utils = { workspace = true }
 solana-storage-bigtable = { workspace = true }
 symlink = { workspace = true }
 rayon = { workspace = true }
+solana-epoch-schedule = "2.2.1"
+solana-genesis-config = { version = "2.2.1", features = ["serde"] }
+solana-reward-info = "2.2.1"
+solana-epoch-rewards-hasher = "2.2.1"
+tar = { workspace = true }
+rand = { workspace = true }
+bzip2 = { workspace = true }
 
 [dev-dependencies]
 matches = { workspace = true }

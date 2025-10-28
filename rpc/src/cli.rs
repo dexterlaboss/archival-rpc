@@ -202,6 +202,26 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .help("Hdfs archive base path"),
         )
         .arg(
+            Arg::with_name("disable_block_car_files")
+                .long("disable-block-car-files")
+                .takes_value(false)
+                .help("Disable CAR file reads; use HBase 'blocks' table for getBlock"),
+        )
+        .arg(
+            Arg::with_name("use_webhdfs")
+                .long("use-webhdfs")
+                .takes_value(false)
+                .requires("webhdfs_url")
+                .help("Use WebHDFS instead of native HDFS client for CAR file reads"),
+        )
+        .arg(
+            Arg::with_name("webhdfs_url")
+                .long("webhdfs-url")
+                .value_name("WEBHDFS_URL")
+                .takes_value(true)
+                .help("Base WebHDFS URL, e.g. http(s)://namenode:50070/webhdfs/v1"),
+        )
+        .arg(
             Arg::with_name("rpc_hbase_timeout")
                 .long("rpc-hbase-timeout")
                 .value_name("SECONDS")

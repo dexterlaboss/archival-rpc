@@ -171,7 +171,10 @@ pub struct RpcHBaseConfig {
     pub enable_full_tx_cache: bool,
     pub disable_tx_fallback: bool,
     pub cache_address: Option<String>,
+    pub use_block_car_files: bool,
     pub use_hbase_blocks_meta: bool,
+    pub use_webhdfs: bool,
+    pub webhdfs_url: Option<String>,
 }
 
 impl Default for RpcHBaseConfig {
@@ -193,7 +196,10 @@ impl Default for RpcHBaseConfig {
             enable_full_tx_cache: false,
             disable_tx_fallback: false,
             cache_address: None,
+            use_block_car_files: true,
             use_hbase_blocks_meta: false,
+            use_webhdfs: false,
+            webhdfs_url: None,
         }
     }
 }
@@ -714,22 +720,42 @@ impl JsonRpcRequestProcessor {
         }
 
         let config = config.unwrap_or_default();
+        debug!(
+            "get_inflation_reward: inputs => addresses: {:?}, commitment: {:?}, min_context_slot: {:?}, epoch: {:?}",
+            addresses,
+            config.commitment,
+            config.min_context_slot,
+            config.epoch,
+        );
         let epoch_schedule = self.get_epoch_schedule()?;
         let first_available_block = self.get_first_available_block().await;
         let context_config = RpcContextConfig {
             commitment: config.commitment,
             min_context_slot: config.min_context_slot,
         };
+        let current_slot = self.get_slot(context_config).await;
         let epoch = match config.epoch {
             Some(epoch) => epoch,
             None => epoch_schedule
-                .get_epoch(self.get_slot(context_config).await)
+                .get_epoch(current_slot)
                 .saturating_sub(1),
         };
+        debug!(
+            "get_inflation_reward: derived => current_slot: {:?}, epoch: {:?}, first_available_block: {:?}",
+            current_slot, epoch, first_available_block
+        );
 
         // Rewards for this epoch are found in the first confirmed block of the next epoch
         let first_slot_in_epoch = epoch_schedule.get_first_slot_in_epoch(epoch.saturating_add(1));
+        debug!(
+            "get_inflation_reward: first_slot_in_next_epoch: {:?}",
+            first_slot_in_epoch
+        );
         if first_slot_in_epoch < first_available_block {
+            debug!(
+                "get_inflation_reward: aborting due to LongTermStorageSlotSkipped at slot {:?}",
+                first_slot_in_epoch
+            );
             return Err(RpcCustomError::LongTermStorageSlotSkipped {
                 slot: first_slot_in_epoch,
             }
@@ -743,6 +769,10 @@ impl JsonRpcRequestProcessor {
             .ok_or(RpcCustomError::BlockNotAvailable {
                 slot: first_slot_in_epoch,
             })?;
+        debug!(
+            "get_inflation_reward: first_confirmed_block_in_epoch: {:?}",
+            first_confirmed_block_in_epoch
+        );
 
         // Get first block in the epoch
         let epoch_boundary_block = match self
@@ -754,12 +784,22 @@ impl JsonRpcRequestProcessor {
         {
             Some(block) => block,
             None => {
+                debug!(
+                    "get_inflation_reward: epoch boundary block not available at slot {:?}",
+                    first_confirmed_block_in_epoch
+                );
                 return Err(RpcCustomError::BlockNotAvailable {
                     slot: first_confirmed_block_in_epoch,
                 }
                 .into());
             }
         };
+        debug!(
+            "get_inflation_reward: epoch_boundary_block => parent_slot: {:?}, rewards_len: {:?}, num_reward_partitions: {:?}",
+            epoch_boundary_block.parent_slot,
+            epoch_boundary_block.rewards.as_ref().map(|r| r.len()),
+            epoch_boundary_block.num_reward_partitions
+        );
 
         // If there is a gap in blockstore or long-term historical storage that
         // includes the epoch boundary, the `get_blocks_with_limit()` call above
@@ -769,6 +809,11 @@ impl JsonRpcRequestProcessor {
         // it didn't, return an error; it will be impossible to locate
         // rewards properly.
         if epoch_boundary_block.parent_slot >= first_slot_in_epoch {
+            debug!(
+                "get_inflation_reward: SlotNotEpochBoundary (parent_slot {:?} >= first_slot_in_epoch {:?})",
+                epoch_boundary_block.parent_slot,
+                first_slot_in_epoch
+            );
             return Err(RpcCustomError::SlotNotEpochBoundary {
                 slot: first_confirmed_block_in_epoch,
             }
@@ -776,6 +821,10 @@ impl JsonRpcRequestProcessor {
         }
 
         let epoch_has_partitioned_rewards = epoch_boundary_block.num_reward_partitions.is_some();
+        debug!(
+            "get_inflation_reward: epoch_has_partitioned_rewards: {:?}",
+            epoch_has_partitioned_rewards
+        );
 
         // Collect rewards from first block in the epoch if partitioned epoch
         // rewards not enabled, or address is a vote account
@@ -792,6 +841,78 @@ impl JsonRpcRequestProcessor {
                 },
             )
         };
+        debug!(
+            "get_inflation_reward: initial reward_map size: {:?}",
+            reward_map.len()
+        );
+
+        // Fallback: some clusters may produce rewards a few blocks after the epoch boundary
+        // even when num_reward_partitions is not populated. If requested addresses are still
+        // missing, scan forward a bounded number of blocks to locate their rewards.
+        let mut missing_addresses: Vec<String> = addresses
+            .iter()
+            .map(|pk| pk.to_string())
+            .filter(|addr| !reward_map.contains_key(addr))
+            .collect();
+        if !missing_addresses.is_empty() {
+            let scan_limit = 256usize; // bounded scan for safety/perf
+            debug!(
+                "get_inflation_reward: fallback scan => missing: {:?}, scan_limit: {:?}",
+                missing_addresses.len(),
+                scan_limit
+            );
+            let block_list = self
+                .get_blocks_with_limit(
+                    first_confirmed_block_in_epoch.saturating_add(1),
+                    scan_limit,
+                    context_config.commitment,
+                )
+                .await?;
+            for slot in block_list.into_iter() {
+                if missing_addresses.is_empty() {
+                    break;
+                }
+                let maybe_block = self
+                    .get_block(
+                        slot,
+                        Some(
+                            RpcBlockConfig::rewards_with_commitment(
+                                Some(context_config.commitment.unwrap_or_default()),
+                            )
+                            .into(),
+                        ),
+                    )
+                    .await?;
+                if let Some(block) = maybe_block {
+                    let delta = Self::filter_map_rewards(
+                        &block.rewards,
+                        slot,
+                        &missing_addresses,
+                        &|reward_type| -> bool {
+                            // Include both reward types to be robust
+                            reward_type == RewardType::Voting || reward_type == RewardType::Staking
+                        },
+                    );
+                    if !delta.is_empty() {
+                        debug!(
+                            "get_inflation_reward: fallback scan => slot {:?} matched {:?} addresses",
+                            slot,
+                            delta.len()
+                        );
+                        for key in delta.keys() {
+                            if let Some(idx) = missing_addresses.iter().position(|a| a == key) {
+                                missing_addresses.swap_remove(idx);
+                            }
+                        }
+                        reward_map.extend(delta);
+                    }
+                }
+            }
+            debug!(
+                "get_inflation_reward: fallback scan complete => still missing: {:?}",
+                missing_addresses.len()
+            );
+        }
 
         // Append stake account rewards from partitions if partitions epoch
         // rewards is enabled
@@ -821,6 +942,11 @@ impl JsonRpcRequestProcessor {
                         .or_insert(vec![address_string]);
                 }
             }
+            debug!(
+                "get_inflation_reward: partitioning => num_partitions: {:?}, queried_partition_indexes: {:?}",
+                num_partitions,
+                partition_index_addresses.keys().cloned().collect::<Vec<_>>()
+            );
 
             let block_list = self
                 .get_blocks_with_limit(
@@ -850,6 +976,12 @@ impl JsonRpcRequestProcessor {
                                 "every block after partitioned_epoch_reward_enabled should have a \
                                  populated block_height",
                             );
+                        debug!(
+                            "get_inflation_reward: EpochRewardsPeriodActive => latest_slot: {:?}, current_block_height: {:?}, rewards_complete_block_height: {:?}",
+                            latest_slot,
+                            current_block_height,
+                            rewards_complete_block_height
+                        );
                         return Err(RpcCustomError::EpochRewardsPeriodActive {
                             slot: latest_slot,
                             current_block_height,
@@ -867,6 +999,10 @@ impl JsonRpcRequestProcessor {
                 {
                     Some(block) => block,
                     None => {
+                        debug!(
+                            "get_inflation_reward: BlockNotAvailable at partition slot {:?}",
+                            slot
+                        );
                         return Err(RpcCustomError::BlockNotAvailable { slot }.into());
                     }
                 };
@@ -877,11 +1013,16 @@ impl JsonRpcRequestProcessor {
                     addresses,
                     &|reward_type| -> bool { reward_type == RewardType::Staking },
                 );
+                debug!(
+                    "get_inflation_reward: partition {:?} => found {:?} rewards",
+                    partition_index,
+                    index_reward_map.len()
+                );
                 reward_map.extend(index_reward_map);
             }
         }
 
-        let rewards = addresses
+        let rewards: Vec<Option<RpcInflationReward>> = addresses
             .iter()
             .map(|address| {
                 if let Some((reward, slot)) = reward_map.get(&address.to_string()) {
@@ -896,7 +1037,11 @@ impl JsonRpcRequestProcessor {
                 None
             })
             .collect();
-
+        debug!(
+            "get_inflation_reward: result => requested: {:?}, returned: {:?}",
+            addresses.len(),
+            rewards.iter().filter(|r| r.is_some()).count()
+        );
         Ok(rewards)
     }
 

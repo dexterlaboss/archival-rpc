@@ -113,7 +113,12 @@ fn main() {
         } else {
             None
         },
-        hdfs_url: value_t_or_exit!(matches, "hdfs_url", String),
+        hdfs_url: if matches.is_present("use_webhdfs") {
+            // Not required when using WebHDFS; leave default from storage-hbase
+            solana_storage_hbase::DEFAULT_HDFS_URL.to_string()
+        } else {
+            value_t_or_exit!(matches, "hdfs_url", String)
+        },
         hdfs_path: value_t_or_exit!(matches, "hdfs_path", String),
         // hdfs_url: if matches.is_present("hdfs_url") {
         //     Some(value_t_or_exit!(
@@ -165,7 +170,12 @@ fn main() {
         } else {
             None
         },
+        use_block_car_files: !matches.is_present("disable_block_car_files"),
         use_hbase_blocks_meta: matches.is_present("use_hbase_blocks_meta"),
+        use_webhdfs: matches.is_present("use_webhdfs"),
+        webhdfs_url: if matches.is_present("use_webhdfs") {
+            Some(value_t_or_exit!(matches, "webhdfs_url", String))
+        } else { None },
     });
 
     builder.rpc_port(rpc_port);

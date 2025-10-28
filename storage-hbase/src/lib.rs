@@ -228,7 +228,10 @@ pub struct LedgerStorageConfig {
     pub enable_full_tx_cache: bool,
     pub disable_tx_fallback: bool,
     pub cache_address: Option<String>,
+    pub use_block_car_files: bool,
     pub use_hbase_blocks_meta: bool,
+    pub use_webhdfs: bool,
+    pub webhdfs_url: Option<String>,
 }
 
 impl Default for LedgerStorageConfig {
@@ -246,7 +249,10 @@ impl Default for LedgerStorageConfig {
             enable_full_tx_cache: false,
             disable_tx_fallback: false,
             cache_address: Some(DEFAULT_ADDRESS.to_string()),
+            use_block_car_files: true,
             use_hbase_blocks_meta: false,
+            use_webhdfs: false,
+            webhdfs_url: None,
         }
     }
 }
@@ -254,7 +260,7 @@ impl Default for LedgerStorageConfig {
 #[derive(Clone)]
 pub struct LedgerStorage {
     connection: hbase::HBaseConnection,
-    hdfs_client: Arc<Client>,
+    hdfs_client: Option<Arc<Client>>,
     hdfs_path: String,
     // namespace: Option<String>,
     // cache: Option<Cache<Slot, RowData>>,
@@ -265,6 +271,9 @@ pub struct LedgerStorage {
     metrics: Arc<Metrics>,
     use_block_car_files: bool,
     use_hbase_blocks_meta: bool,
+    use_webhdfs: bool,
+    webhdfs_url: Option<String>,
+    http_client: Option<reqwest::Client>,
 }
 
 impl LedgerStorage {
@@ -296,7 +305,10 @@ impl LedgerStorage {
             enable_full_tx_cache,
             disable_tx_fallback,
             cache_address,
+            use_block_car_files,
             use_hbase_blocks_meta,
+            use_webhdfs,
+            webhdfs_url,
         } = config;
 
         let connection = hbase::HBaseConnection::new(
@@ -307,13 +319,32 @@ impl LedgerStorage {
         )
             .await?;
 
-        let hdfs_client = Client::new(&hdfs_url)
-            .map_err(|e| {
-                Error::StorageBackendError(Box::new(std::io::Error::new(
+        if use_webhdfs && webhdfs_url.is_none() {
+            return Err(Error::StorageBackendError(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "webhdfs_url must be provided when use_webhdfs is true",
+            ))));
+        }
+
+        let (hdfs_client, http_client) = if use_webhdfs {
+            let http_client = reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::limited(10))
+                .build()
+                .map_err(|e| Error::StorageBackendError(Box::new(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("Failed to create HDFS client: {e}"),
-                )))
-            })?;
+                    format!("Failed to create WebHDFS HTTP client: {e}"),
+                ))))?;
+            (None, Some(http_client))
+        } else {
+            let hdfs_client = Client::new(&hdfs_url)
+                .map_err(|e| {
+                    Error::StorageBackendError(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Failed to create HDFS client: {e}"),
+                    )))
+                })?;
+            (Some(Arc::new(hdfs_client)), None)
+        };
         let cache_client = if enable_full_tx_cache {
             if let Some(cache_addr) = cache_address {
                 let cache_addr = format!("memcache://{}?timeout=1&protocol=ascii", cache_addr);
@@ -349,7 +380,7 @@ impl LedgerStorage {
 
         Ok(Self {
             connection,
-            hdfs_client: Arc::new(hdfs_client),
+            hdfs_client,
             hdfs_path,
             // namespace,
             // cache,
@@ -358,8 +389,11 @@ impl LedgerStorage {
             cache_client,
             disable_tx_fallback,
             metrics,
-            use_block_car_files: true,
+            use_block_car_files,
             use_hbase_blocks_meta,
+            use_webhdfs,
+            webhdfs_url,
+            http_client,
         })
     }
 
@@ -573,36 +607,104 @@ impl LedgerStorageAdapter for LedgerStorage {
         let offset = index_entry.offset;
         let length = index_entry.length;
 
-        // 3) Read from HDFS
-        debug!("Reading CAR file from HDFS at offset {} with length {}", offset, length);
-        let mut file = self.hdfs_client.read(&car_path).await.map_err(|e| {
-            error!("Failed to open CAR file on HDFS: {}", e);
-            Error::StorageBackendError(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to open CAR file on HDFS: {e}"),
-            )))
-        })?;
+        // 3) Read from HDFS or WebHDFS
+        let data = if self.use_webhdfs {
+            let base = self.webhdfs_url.as_ref().ok_or_else(|| {
+                Error::StorageBackendError(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "webhdfs_url is required when use_webhdfs is true",
+                )))
+            })?;
 
-        // Seek to the offset in the CAR file
-        if panic::catch_unwind(panic::AssertUnwindSafe(|| file.seek(offset as usize))).is_err() {
-            return Err(Error::StorageBackendError(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to seek to offset {}", offset),
-            ))));
-        }
+            // Normalize base to include /webhdfs/v1
+            let mut base = base.trim_end_matches('/').to_string();
+            if !base.ends_with("/webhdfs/v1") {
+                base.push_str("/webhdfs/v1");
+            }
 
-        debug!("Successfully sought to offset {}", offset);
+            let path = if car_path.starts_with('/') { car_path.clone() } else { format!("/{}", car_path) };
+            let url = format!("{}{}?op=OPEN&offset={}&length={}", base, path, offset, length);
 
-        // Read exactly `length` bytes from the file
-        let data = file.read(length as usize).await.map_err(|e| {
-            error!("Failed to read CAR data from HDFS: {}", e);
-            Error::StorageBackendError(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to read CAR data from HDFS: {e}"),
-            )))
-        })?;
+            debug!("Reading CAR file from WebHDFS URL: {}", url);
+            let http = self.http_client.as_ref().ok_or_else(|| {
+                Error::StorageBackendError(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "WebHDFS HTTP client is not initialized",
+                )))
+            })?;
 
-        debug!("Successfully read {} bytes from HDFS", data.len());
+            let response = http
+                .get(&url)
+                .send()
+                .await
+                .map_err(|e| {
+                    error!("Failed to send WebHDFS request: {}", e);
+                    Error::StorageBackendError(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Failed to send WebHDFS request: {e}"),
+                    )))
+                })?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                error!("WebHDFS responded with error status {}: {}", status, text);
+                return Err(Error::StorageBackendError(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("WebHDFS error: status={} body={}", status, text),
+                ))));
+            }
+
+            let bytes = response.bytes().await.map_err(|e| {
+                error!("Failed to read WebHDFS response body: {}", e);
+                Error::StorageBackendError(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to read WebHDFS response body: {e}"),
+                )))
+            })?;
+
+            debug!("Successfully read {} bytes from WebHDFS", bytes.len());
+            bytes.to_vec()
+        } else {
+            debug!("Reading CAR file from HDFS at offset {} with length {}", offset, length);
+            let mut file = self.hdfs_client
+                .as_ref()
+                .ok_or_else(|| Error::StorageBackendError(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "HDFS client is not initialized",
+                ))))?
+                .read(&car_path)
+                .await
+                .map_err(|e| {
+                    error!("Failed to open CAR file on HDFS: {}", e);
+                    Error::StorageBackendError(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Failed to open CAR file on HDFS: {e}"),
+                    )))
+                })?;
+
+            // Seek to the offset in the CAR file
+            if panic::catch_unwind(panic::AssertUnwindSafe(|| file.seek(offset as usize))).is_err() {
+                return Err(Error::StorageBackendError(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to seek to offset {}", offset),
+                ))));
+            }
+
+            debug!("Successfully sought to offset {}", offset);
+
+            // Read exactly `length` bytes from the file
+            let data = file.read(length as usize).await.map_err(|e| {
+                error!("Failed to read CAR data from HDFS: {}", e);
+                Error::StorageBackendError(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to read CAR data from HDFS: {e}"),
+                )))
+            })?;
+            data.to_vec()
+        };
+
+        debug!("Successfully read {} bytes from storage backend", data.len());
 
         if data.len() < length as usize {
             return Err(Error::StorageBackendError(Box::new(std::io::Error::new(

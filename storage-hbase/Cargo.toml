@@ -36,6 +36,7 @@ tokio-util = { workspace = true }
 async-compression = { workspace = true }
 hdfs-native = { workspace = true }
 anyhow = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "stream"] }
 
 solana-clock = { workspace = true }
 solana-pubkey = { workspace = true }

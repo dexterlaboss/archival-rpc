@@ -358,7 +358,7 @@ impl LedgerStorage {
             cache_client,
             disable_tx_fallback,
             metrics,
-            use_block_car_files: false,
+            use_block_car_files: true,
             use_hbase_blocks_meta,
         })
     }

@@ -12,7 +12,7 @@ use {
         config::*,
         request::{
             MAX_GET_CONFIRMED_BLOCKS_RANGE,
-            MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT,
+            // MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT,
         },
         response::{Response as RpcResponse, *},
     },
@@ -75,6 +75,8 @@ use {
 
 pub const MAX_REQUEST_BODY_SIZE: usize = 50 * (1 << 10); // 50kB
 pub const MAX_GENESIS_ARCHIVE_UNPACKED_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+
+pub const MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT: usize = 10_000;
 
 type Rewards = Vec<Reward>;
 

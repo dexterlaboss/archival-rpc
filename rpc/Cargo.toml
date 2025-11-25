@@ -54,10 +54,10 @@ solana-net-utils = { workspace = true }
 solana-storage-bigtable = { workspace = true }
 symlink = { workspace = true }
 rayon = { workspace = true }
-solana-epoch-schedule = "2.2.1"
-solana-genesis-config = { version = "2.2.1", features = ["serde"] }
-solana-reward-info = "2.2.1"
-solana-epoch-rewards-hasher = "2.2.1"
+solana-epoch-schedule = "3.0.0"
+solana-genesis-config = { version = "3.0.0", features = ["serde"] }
+solana-reward-info = "3.0.0"
+solana-epoch-rewards-hasher = "3.0.0"
 tar = { workspace = true }
 rand = { workspace = true }
 bzip2 = { workspace = true }

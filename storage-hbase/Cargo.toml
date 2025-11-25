@@ -45,7 +45,7 @@ solana-sysvar = { workspace = true }
 solana-message = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
-solana-reserved-account-keys = { workspace = true }
+agave-reserved-account-keys = { workspace = true }
 
 [dependencies.tokio]
 features = ["rt-multi-thread", "macros", "io-util", "rt", "net", "time"]

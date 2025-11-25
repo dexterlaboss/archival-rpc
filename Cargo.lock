@@ -3074,7 +3074,7 @@ dependencies = [
 
 [[package]]
 name = "proto"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "protobuf-src",
  "tonic-build",
@@ -4390,7 +4390,7 @@ dependencies = [
 
 [[package]]
 name = "solana-metrics"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "prometheus",
 ]
@@ -4406,7 +4406,7 @@ dependencies = [
 
 [[package]]
 name = "solana-net-utils"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "url 2.5.4",
 ]
@@ -4427,7 +4427,7 @@ dependencies = [
 
 [[package]]
 name = "solana-perf"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "caps",
  "libc",
@@ -4533,7 +4533,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "bzip2",
  "clap",
@@ -4838,7 +4838,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-adapter"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "async-trait",
  "bincode",
@@ -4866,7 +4866,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-bigtable"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "agave-reserved-account-keys",
  "async-trait",
@@ -4905,7 +4905,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-hbase"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "agave-reserved-account-keys",
  "anyhow",
@@ -4949,7 +4949,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-proto"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "bincode",
  "bs58 0.4.0",

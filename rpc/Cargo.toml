@@ -27,6 +27,7 @@ serde_json = { workspace = true }
 
 solana-perf = { workspace = true }
 solana-rpc-client-api = { workspace = true }
+solana-client = { workspace = true }
 solana-storage-hbase = { workspace = true }
 solana-storage-adapter = { workspace = true }
 solana-transaction-status = { workspace = true }

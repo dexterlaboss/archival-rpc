@@ -16,6 +16,7 @@ use {
         },
         response::{Response as RpcResponse, *},
     },
+    solana_client::nonblocking::rpc_client::RpcClient,
     solana_clock::{
         Slot,
         UnixTimestamp,
@@ -122,10 +123,12 @@ pub fn verify_pubkey(input: &str) -> Result<Pubkey> {
         .map_err(|e| Error::invalid_params(format!("Invalid param: {e:?}")))
 }
 
-fn new_response<T>(value: T) -> RpcResponse<T> {
+fn new_response<T>(context: Option<RpcResponseContext>, value: T) -> RpcResponse<T> {
     RpcResponse {
         // TODO: Maybe add actual slot to the contect?
-        context: RpcResponseContext::new(/*bank.slot()*/ Slot::default()),
+        context: context.unwrap_or(RpcResponseContext::new(
+            /*bank.slot()*/ Slot::default(),
+        )),
         value,
     }
 }
@@ -140,6 +143,7 @@ pub struct RpcBlockCheck {
 pub struct JsonRpcConfig {
     pub enable_rpc_transaction_history: bool,
     pub rpc_hbase_config: Option<RpcHBaseConfig>,
+    pub rpc_node_config: UpstreamRpcConfig,
     pub rpc_threads: usize,
     pub rpc_niceness_adj: i8,
     pub full_api: bool,
@@ -177,6 +181,11 @@ pub struct RpcHBaseConfig {
     pub use_hbase_blocks_meta: bool,
     pub use_webhdfs: bool,
     pub webhdfs_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct UpstreamRpcConfig {
+    pub rpc_node_address: Option<String>,
 }
 
 impl Default for RpcHBaseConfig {
@@ -496,40 +505,6 @@ impl JsonRpcRequestProcessor {
         Ok(None)
     }
 
-    pub async fn get_signature_statuses(
-        &self,
-        signatures: Vec<Signature>,
-        config: Option<RpcSignatureStatusConfig>,
-    ) -> Result<RpcResponse<Vec<Option<TransactionStatus>>>> {
-        let mut statuses: Vec<Option<TransactionStatus>> = vec![];
-
-        let search_transaction_history = config
-            .map(|x| x.search_transaction_history)
-            .unwrap_or(false);
-
-        if search_transaction_history && !self.config.enable_rpc_transaction_history {
-            return Err(RpcCustomError::TransactionHistoryNotAvailable.into());
-        }
-
-        for signature in signatures {
-            let status = if self.config.enable_rpc_transaction_history && search_transaction_history {
-                if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
-                    hbase_ledger_storage
-                        .get_signature_status(&signature)
-                        .await
-                        .map(Some)
-                        .unwrap_or(None)
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            statuses.push(status);
-        }
-        Ok(new_response(/*&bank,*/ statuses))
-    }
-
     pub async fn get_transaction(
         &self,
         signature: Signature,
@@ -579,6 +554,91 @@ impl JsonRpcRequestProcessor {
         }
 
         Ok(None)
+    }
+
+    pub async fn get_signature_statuses(
+        &self,
+        signatures: Vec<Signature>,
+        config: Option<RpcSignatureStatusConfig>,
+    ) -> Result<RpcResponse<Vec<Option<TransactionStatus>>>> {
+        let search_transaction_history = config
+            .map(|x| x.search_transaction_history)
+            .unwrap_or(false);
+
+        if search_transaction_history && !self.config.enable_rpc_transaction_history {
+            return Err(RpcCustomError::TransactionHistoryNotAvailable.into());
+        }
+
+        let mut statuses: Vec<Option<TransactionStatus>> = vec![None; signatures.len()];
+        let mut context: Option<RpcResponseContext> = None;
+
+        // signatures that need HBase lookup
+        let mut missing_sigs: Vec<Signature> = vec![];
+        let mut missing_idxs: Vec<usize> = vec![];
+
+        if let Some(rpc_node_address) = self.config.rpc_node_config.rpc_node_address.as_ref() {
+            let client = RpcClient::new(rpc_node_address.clone());
+            let response = if search_transaction_history {
+                client
+                    .get_signature_statuses_with_history(&signatures)
+                    .await
+            } else {
+                client.get_signature_statuses(&signatures).await
+            }
+            .map_err(|e| match *e.kind {
+                solana_client::client_error::ClientErrorKind::RpcError(
+                    solana_client::rpc_request::RpcError::RpcResponseError {
+                        code,
+                        message,
+                        data: _,
+                    },
+                ) => Error {
+                    code: jsonrpc_core::ErrorCode::from(code),
+                    message,
+                    data: None,
+                },
+                _ => Error::internal_error(),
+            })?;
+
+            context = Some(response.context);
+
+            for (idx, (signature, tx_status)) in
+                signatures.into_iter().zip(response.value).enumerate()
+            {
+                if tx_status.is_some() {
+                    statuses[idx] = tx_status;
+                } else {
+                    missing_sigs.push(signature);
+                    missing_idxs.push(idx);
+                }
+            }
+        } else {
+            // no RPC node, all signatures need HBase lookup
+            missing_sigs = signatures;
+            missing_idxs = (0..missing_sigs.len()).collect();
+        }
+
+        if missing_sigs.is_empty() {
+            return Ok(new_response(context, statuses));
+        }
+
+        if search_transaction_history {
+            if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
+                let response = hbase_ledger_storage
+                    .get_signatures_status(&missing_sigs)
+                    .await
+                    .map_err(|e| {
+                        warn!("getSignatureStatuses to Hbase failed: {}", e);
+                        RpcCustomError::LongTermStorageUnreachable
+                    })?;
+
+                for (idx, tx_status) in missing_idxs.into_iter().zip(response) {
+                    statuses[idx] = tx_status.map(Some).unwrap_or(None)
+                }
+            }
+        }
+
+        Ok(new_response(context, statuses))
     }
 
     pub async fn get_signatures_for_address(

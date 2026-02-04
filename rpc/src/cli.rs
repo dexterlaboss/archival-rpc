@@ -172,6 +172,13 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .help("Address of HBase instance to use"),
         )
         .arg(
+            Arg::with_name("rpc_node_address")
+                .long("rpc-node-address")
+                .value_name("ADDRESS")
+                .takes_value(true)
+                .help("RPC endpoint to use for stitching RPC methods"),
+        )
+        .arg(
             Arg::with_name("fallback_hbase_address")
                 .long("fallback-hbase-address")
                 .value_name("ADDRESS")

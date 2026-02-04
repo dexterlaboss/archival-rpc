@@ -875,6 +875,42 @@ impl LedgerStorageAdapter for LedgerStorage {
         Ok(transaction_info.into())
     }
 
+    async fn get_signatures_status(
+        &self,
+        signatures: &Vec<Signature>,
+    ) -> Result<Vec<Result<TransactionStatus>>> {
+        debug!(
+            "LedgerStorage::get_signatures_status request received: {:?}",
+            signatures
+        );
+
+        if signatures.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut hbase = self.connection.client();
+        let keys = signatures
+            .iter()
+            .map(|signature| signature.to_string())
+            .collect();
+
+        let result = hbase
+            .get_bincode_cells::<TransactionInfo>("tx", keys)
+            .await?
+            .into_iter()
+            .map(|tx_info_result| {
+                tx_info_result
+                    .map(|tx_info| tx_info.into())
+                    .map_err(|err| match err {
+                        hbase::Error::RowNotFound => Error::SignatureNotFound,
+                        _ => err.into(),
+                    })
+            })
+            .collect();
+
+        Ok(result)
+    }
+
     async fn get_full_transaction(
         &self,
         signature: &Signature,

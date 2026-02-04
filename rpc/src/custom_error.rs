@@ -15,6 +15,7 @@ pub const JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_SLOT_SKIPPED: i64 = -32009;
 pub const JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE: i64 = -32011;
 pub const JSON_RPC_SCAN_ERROR: i64 = -32012;
 pub const JSON_RPC_SERVER_ERROR_UNSUPPORTED_TRANSACTION_VERSION: i64 = -32015;
+pub const JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_UNREACHABLE: i64 = -32019;
 
 pub const JSON_RPC_HBASE_ERROR: i64 = -32017;
 pub const JSON_RPC_SERVER_ERROR_SLOT_NOT_EPOCH_BOUNDARY: i64 = -32018;
@@ -47,6 +48,8 @@ pub enum RpcCustomError {
     },
     #[error("MethodNotSupported")]
     MethodNotSupported(String),
+    #[error("LongTermStorageUnreachable")]
+    LongTermStorageUnreachable,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -134,6 +137,11 @@ impl From<RpcCustomError> for Error {
             RpcCustomError::MethodNotSupported(message) => Self {
                 code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_METHOD_NOT_SUPPORTED),
                 message,
+                data: None,
+            },
+            RpcCustomError::LongTermStorageUnreachable => Self {
+                code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_UNREACHABLE),
+                message: "Failed to query long-term storage; please try again".to_string(),
                 data: None,
             },
         }

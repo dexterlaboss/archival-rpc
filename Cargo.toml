@@ -78,6 +78,7 @@ rand = "0.8.5"
 
 solana-logger = "=3.0.0"
 solana-rpc-client-api = "=3.0.10"
+solana-client = "=3.0.10"
 solana-transaction-status = "=3.0.10"
 solana-version = "=3.0.10"
 

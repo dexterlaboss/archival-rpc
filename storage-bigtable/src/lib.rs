@@ -500,6 +500,10 @@ impl LedgerStorageAdapter for LedgerStorage {
         Ok(transaction_info.into())
     }
 
+    async fn get_signatures_status(&self, _signatures: &Vec<Signature>) -> Result<Vec<Result<TransactionStatus>>> {
+        unimplemented!("LedgerStorage::get_signatures_status is not implemented yet");
+    }
+
     async fn get_full_transaction(
         &self,
         signature: &Signature,

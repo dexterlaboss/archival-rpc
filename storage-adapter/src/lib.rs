@@ -455,6 +455,8 @@ pub trait LedgerStorageAdapter: Send + Sync {
 
     async fn get_signature_status(&self, signature: &Signature) -> Result<TransactionStatus>;
 
+    async fn get_signatures_status(&self, signatures: &Vec<Signature>) -> Result<Vec<Result<TransactionStatus>>>;
+
     async fn get_full_transaction(
         &self,
         signature: &Signature,

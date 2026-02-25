@@ -6,7 +6,7 @@ use {
         rpc_core::RpcNodeBuilder,
         cli,
         logging::redirect_stderr_to_file,
-        request_processor::{JsonRpcConfig, RpcHBaseConfig},
+        request_processor::{JsonRpcConfig, RpcHBaseConfig, UpstreamRpcConfig},
     },
     clap::{
         value_t_or_exit,
@@ -178,11 +178,20 @@ fn main() {
         } else { None },
     });
 
+    let rpc_node_config = UpstreamRpcConfig {
+        rpc_node_address: if matches.is_present("rpc_node_address") {
+            Some(value_t_or_exit!(matches, "rpc_node_address", String))
+        } else {
+            None
+        },
+    };
+
     builder.rpc_port(rpc_port);
 
     builder.rpc_config(JsonRpcConfig {
         enable_rpc_transaction_history: true,
         rpc_hbase_config,
+        rpc_node_config,
         // full_api,
         obsolete_v1_7_api: matches.is_present("obsolete_v1_7_rpc_api"),
         rpc_threads: value_t_or_exit!(matches, "rpc_threads", usize),

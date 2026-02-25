@@ -15,7 +15,7 @@ use {
         },
         transport::{TBufferedReadTransport, TBufferedWriteTransport, TIoChannel, TTcpChannel},
     },
-    std::collections::BTreeMap,
+    std::collections::{BTreeMap, HashMap, VecDeque},
     std::convert::TryInto,
 };
 
@@ -387,12 +387,76 @@ impl HBase {
         Ok(result_value)
     }
 
+    pub async fn get_rows_data(
+        &mut self,
+        table_name: &str,
+        row_keys: &[RowKey],
+    ) -> Result<Vec<Option<RowData>>> {
+        let qualified_name = self.qualified_table_name(table_name);
+
+        // doesn't deduplicate row keys
+        let rows_result = self.client.get_rows(
+            qualified_name.as_bytes().to_vec(),
+            row_keys
+                .iter()
+                .map(|row_key| row_key.as_bytes().to_vec())
+                .collect(),
+            BTreeMap::new(),
+        )?;
+
+        let mut rows_result_map: HashMap<RowKey, VecDeque<RowData>> =
+            HashMap::with_capacity(rows_result.len());
+
+        for row_result in rows_result {
+            let row_key_bytes = row_result.row.unwrap();
+            let row_key = String::from_utf8(row_key_bytes).unwrap();
+
+            let mut column_values: RowData = Vec::new();
+            for (key, column) in row_result.columns.unwrap_or_default() {
+                let column_value_bytes = column.value.unwrap_or_default();
+                column_values.push((String::from_utf8(key).unwrap(), column_value_bytes));
+            }
+
+            rows_result_map
+                .entry(row_key)
+                .or_insert_with(VecDeque::new)
+                .push_back(column_values);
+        }
+
+        let results = row_keys
+            .iter()
+            .map(|row_key| rows_result_map.get_mut(row_key).and_then(|v| v.pop_front()))
+            .collect();
+
+        Ok(results)
+    }
+
     pub async fn get_bincode_cell<T>(&mut self, table: &str, key: RowKey) -> Result<T>
         where
             T: serde::de::DeserializeOwned,
     {
         let row_data = self.get_single_row_data(table, key.clone()).await?;
         deserialize_bincode_cell_data(&row_data, table, key.to_string())
+    }
+
+    pub async fn get_bincode_cells<T>(
+        &mut self,
+        table: &str,
+        keys: Vec<RowKey>,
+    ) -> Result<Vec<Result<T>>>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let rows_data = self.get_rows_data(table, &keys).await?;
+
+        Ok(rows_data
+            .into_iter()
+            .zip(keys.into_iter())
+            .map(|(row_data, key)| match row_data {
+                Some(data) => deserialize_bincode_cell_data(&data, table, key),
+                None => Err(Error::RowNotFound),
+            })
+            .collect())
     }
 
     pub async fn get_protobuf_or_bincode_cell<B, P>(

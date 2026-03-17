@@ -97,6 +97,7 @@ impl JsonRpcService {
                             use_hbase_blocks_meta,
                             use_webhdfs,
                             ref webhdfs_url,
+                            ref fallback_hbase_address,
                             ..
                         }) = config.rpc_hbase_config
             {
@@ -104,6 +105,7 @@ impl JsonRpcService {
                     read_only: true,
                     timeout,
                     address: hbase_address.clone(),
+                    fallback_address: fallback_hbase_address.clone(),
                     namespace: namespace.clone(),
                     hdfs_url: hdfs_url.clone(),
                     hdfs_path: hdfs_path.clone(),
@@ -157,6 +159,7 @@ impl JsonRpcService {
                         read_only: true,
                         timeout,
                         address: fallback_address.clone(),
+                        fallback_address: None,
                         namespace: namespace.clone(),
                         hdfs_url: hdfs_url.clone(),
                         hdfs_path: hdfs_path.clone(),

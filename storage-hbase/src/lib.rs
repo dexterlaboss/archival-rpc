@@ -219,6 +219,7 @@ pub struct LedgerStorageConfig {
     pub read_only: bool,
     pub timeout: Option<std::time::Duration>,
     pub address: String,
+    pub fallback_address: Option<String>,
     pub namespace: Option<String>,
     pub hdfs_url: String,
     pub hdfs_path: String,
@@ -240,6 +241,7 @@ impl Default for LedgerStorageConfig {
             read_only: true,
             timeout: None,
             address: DEFAULT_ADDRESS.to_string(),
+            fallback_address: None,
             namespace: None,
             hdfs_url: DEFAULT_HDFS_URL.to_string(),
             hdfs_path: DEFAULT_HDFS_PATH.to_string(),
@@ -260,6 +262,7 @@ impl Default for LedgerStorageConfig {
 #[derive(Clone)]
 pub struct LedgerStorage {
     connection: hbase::HBaseConnection,
+    fallback_connection: Option<hbase::HBaseConnection>,
     hdfs_client: Option<Arc<Client>>,
     hdfs_path: String,
     // namespace: Option<String>,
@@ -296,6 +299,7 @@ impl LedgerStorage {
             read_only: _,
             timeout: _,
             address,
+            fallback_address,
             namespace,
             hdfs_url,
             hdfs_path,
@@ -318,6 +322,18 @@ impl LedgerStorage {
             // timeout,
         )
             .await?;
+
+
+        let fallback_connection = if let Some(fallback_addr) = fallback_address {
+            Some(hbase::HBaseConnection::new(
+                fallback_addr.as_str(),
+                namespace.as_deref(),
+                // read_only,
+                // timeout,
+            ).await?)
+        } else {
+            None
+        };
 
         if use_webhdfs && webhdfs_url.is_none() {
             return Err(Error::StorageBackendError(Box::new(std::io::Error::new(
@@ -380,6 +396,7 @@ impl LedgerStorage {
 
         Ok(Self {
             connection,
+            fallback_connection,
             hdfs_client,
             hdfs_path,
             // namespace,
@@ -1101,9 +1118,15 @@ impl LedgerStorageAdapter for LedgerStorage {
                 match hbase.get_bincode_cell("tx", until_signature.to_string()).await {
                     Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
                     Err(hbase::Error::RowNotFound) => {
-                        match self.get_full_transaction(until_signature).await? {
-                            Some(full_transaction) => (full_transaction.slot, 0, true),
-                            None => return Ok(vec![]),
+                        if let Some(fallback_connection) = &self.fallback_connection {
+                            let mut hbase = fallback_connection.client();
+                            match hbase.get_bincode_cell("tx", until_signature.to_string()).await {
+                                Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
+                                Err(hbase::Error::RowNotFound) => return Ok(vec![]),
+                                Err(err) => return Err(err.into()),
+                            }
+                        } else {
+                            return Ok(vec![])
                         }
                     },
                     Err(err) => return Err(err.into()),
@@ -1117,9 +1140,15 @@ impl LedgerStorageAdapter for LedgerStorage {
                 match hbase.get_bincode_cell("tx", before_signature.to_string()).await {
                     Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
                     Err(hbase::Error::RowNotFound) => {
-                        match self.get_full_transaction(before_signature).await? {
-                            Some(full_transaction) => (full_transaction.slot, 0, true),
-                            None => return Ok(vec![]),
+                        if let Some(fallback_connection) = &self.fallback_connection {
+                            let mut hbase = fallback_connection.client();
+                            match hbase.get_bincode_cell("tx", before_signature.to_string()).await {
+                                Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
+                                Err(hbase::Error::RowNotFound) => return Ok(vec![]),
+                                Err(err) => return Err(err.into()),
+                            }
+                        } else {
+                            return Ok(vec![])
                         }
                     },
                     Err(err) => return Err(err.into()),
@@ -1276,11 +1305,16 @@ impl LedgerStorageAdapter for LedgerStorage {
                 // Try fetching from `tx` first
                 match hbase.get_bincode_cell("tx", before_signature.to_string()).await {
                     Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
-                    // Fallback to `tx_full` if `tx` is not found
                     Err(hbase::Error::RowNotFound) => {
-                        match self.get_full_transaction(before_signature).await? {
-                            Some(full_transaction) => (full_transaction.slot, 0, true),
-                            None => return Ok(vec![]),
+                        if let Some(fallback_connection) = &self.fallback_connection {
+                            let mut hbase = fallback_connection.client();
+                            match hbase.get_bincode_cell("tx", before_signature.to_string()).await {
+                                Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
+                                Err(hbase::Error::RowNotFound) => return Ok(vec![]),
+                                Err(err) => return Err(err.into()),
+                            }
+                        } else {
+                            return Ok(vec![])
                         }
                     },
                     Err(err) => return Err(err.into()),
@@ -1301,11 +1335,16 @@ impl LedgerStorageAdapter for LedgerStorage {
                 // Try fetching from `tx` first
                 match hbase.get_bincode_cell("tx", until_signature.to_string()).await {
                     Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
-                    // Fallback to `tx_full` if `tx` is not found
                     Err(hbase::Error::RowNotFound) => {
-                        match self.get_full_transaction(until_signature).await? {
-                            Some(full_transaction) => (full_transaction.slot, 0, true),
-                            None => return Ok(vec![]),
+                        if let Some(fallback_connection) = &self.fallback_connection {
+                            let mut hbase = fallback_connection.client();
+                            match hbase.get_bincode_cell("tx", until_signature.to_string()).await {
+                                Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
+                                Err(hbase::Error::RowNotFound) => return Ok(vec![]),
+                                Err(err) => return Err(err.into()),
+                            }
+                        } else {
+                            return Ok(vec![])
                         }
                     },
                     Err(err) => return Err(err.into()),

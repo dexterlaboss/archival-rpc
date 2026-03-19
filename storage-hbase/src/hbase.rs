@@ -70,6 +70,20 @@ impl std::convert::From<thrift::Error> for Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+enum HBaseClient<'a> {
+    Owned(HbaseSyncClient<InputProtocol, OutputProtocol>),
+    Borrowed(&'a mut HbaseSyncClient<InputProtocol, OutputProtocol>),
+}
+
+impl<'a> HBaseClient<'a> {
+    fn get(&mut self) -> &mut HbaseSyncClient<InputProtocol, OutputProtocol> {
+        match self {
+            HBaseClient::Owned(c) => c,
+            HBaseClient::Borrowed(c) => c,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct HBaseConnection {
     address: String,
@@ -127,11 +141,7 @@ impl HBaseConnection {
             output_prot
         );
 
-        HBase {
-            client,
-            namespace: self.namespace.clone(),
-            // timeout: self.timeout,
-        }
+        HBase::new_owned(client, self.namespace.clone())
     }
 
     pub async fn put_bincode_cells_with_retry<T>(
@@ -165,21 +175,40 @@ impl HBaseConnection {
     }
 }
 
-type InputProtocol = TBinaryInputProtocol<TBufferedReadTransport<thrift::transport::ReadHalf<TTcpChannel>>>;
-type OutputProtocol = TBinaryOutputProtocol<TBufferedWriteTransport<thrift::transport::WriteHalf<TTcpChannel>>>;
+pub type InputProtocol = TBinaryInputProtocol<TBufferedReadTransport<thrift::transport::ReadHalf<TTcpChannel>>>;
+pub type OutputProtocol = TBinaryOutputProtocol<TBufferedWriteTransport<thrift::transport::WriteHalf<TTcpChannel>>>;
 
-pub struct HBase {
-    client: HbaseSyncClient<InputProtocol, OutputProtocol>,
-    // timeout: Option<Duration>,
+pub struct HBase<'a> {
+    client: HBaseClient<'a>,
     namespace: Option<String>,
 }
 
-impl HBase {
+impl<'a> HBase<'a> {
     fn qualified_table_name(&self, table_name: &str) -> String {
         if let Some(namespace) = &self.namespace {
             format!("{}:{}", namespace, table_name)
         } else {
             table_name.to_string()
+        }
+    }
+
+    pub fn new_owned(
+        client: HbaseSyncClient<InputProtocol, OutputProtocol>,
+        namespace: Option<String>,
+    ) -> Self {
+        Self {
+            client: HBaseClient::Owned(client),
+            namespace,
+        }
+    }
+
+    pub fn new_borrowed(
+        client: &'a mut HbaseSyncClient<InputProtocol, OutputProtocol>,
+        namespace: Option<String>,
+    ) -> Self {
+        Self {
+            client: HBaseClient::Borrowed(client),
+            namespace,
         }
     }
 
@@ -221,7 +250,7 @@ impl HBase {
         scan.reversed = Some(reversed);
         scan.filter_string = Some(b"KeyOnlyFilter()".to_vec());
 
-        let scan_id = self.client.scanner_open_with_scan(
+        let scan_id = self.client.get().scanner_open_with_scan(
             qualified_name.as_bytes().to_vec(),
             scan,
             BTreeMap::new(),
@@ -230,10 +259,7 @@ impl HBase {
         let mut results: Vec<(RowKey, RowData)> = Vec::new();
         let mut count = 0;
         loop {
-            let row_results = self.client.scanner_get_list(
-                scan_id,
-                rows_limit as i32
-            )?;
+            let row_results = self.client.get().scanner_get_list(scan_id, rows_limit as i32)?;
             if row_results.is_empty() {
                 break;
             }
@@ -256,7 +282,7 @@ impl HBase {
             }
         }
 
-        self.client.scanner_close(scan_id)?;
+        self.client.get().scanner_close(scan_id)?;
 
         Ok(results.into_iter().map(|r| r.0).collect())
     }
@@ -304,7 +330,7 @@ impl HBase {
         scan.reversed = Some(reversed);
         scan.filter_string = Some(b"ColumnPaginationFilter(1,0)".to_vec());
 
-        let scan_id = self.client.scanner_open_with_scan(
+        let scan_id = self.client.get().scanner_open_with_scan(
             qualified_name.as_bytes().to_vec(),
             scan,
             BTreeMap::new(),
@@ -318,7 +344,7 @@ impl HBase {
         let mut count = 0;
 
         loop {
-            let row_results = self.client.scanner_get_list(
+            let row_results = self.client.get().scanner_get_list(
                 scan_id,
                 rows_limit as i32
             )?;
@@ -350,7 +376,7 @@ impl HBase {
             }
         }
 
-        self.client.scanner_close(scan_id)?;
+        self.client.get().scanner_close(scan_id)?;
 
         Ok(results)
     }
@@ -364,7 +390,7 @@ impl HBase {
 
         let qualified_name = self.qualified_table_name(table_name);
 
-        let row_result = self.client.get_row_with_columns(
+        let row_result = self.client.get().get_row_with_columns(
             qualified_name.as_bytes().to_vec(),
             row_key.as_bytes().to_vec(),
             vec!["x".as_bytes().to_vec()],
@@ -395,7 +421,7 @@ impl HBase {
         let qualified_name = self.qualified_table_name(table_name);
 
         // doesn't deduplicate row keys
-        let rows_result = self.client.get_rows(
+        let rows_result = self.client.get().get_rows(
             qualified_name.as_bytes().to_vec(),
             row_keys
                 .iter()
@@ -544,7 +570,7 @@ impl HBase {
             mutation_batches.push(BatchMutation::new(Some(row_key.as_bytes().to_vec()), mutations));
         }
 
-        self.client.mutate_rows(table_name.as_bytes().to_vec(), mutation_batches, Default::default())?;
+        self.client.get().mutate_rows(table_name.as_bytes().to_vec(), mutation_batches, Default::default())?;
 
         Ok(())
     }

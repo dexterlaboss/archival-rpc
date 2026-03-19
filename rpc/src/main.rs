@@ -113,6 +113,7 @@ fn main() {
         } else {
             None
         },
+        thrift_connection_pool_size: value_t_or_exit!(matches, "thrift_connection_pool_size", u32),
         hdfs_url: if matches.is_present("use_webhdfs") {
             // Not required when using WebHDFS; leave default from storage-hbase
             solana_storage_hbase::DEFAULT_HDFS_URL.to_string()

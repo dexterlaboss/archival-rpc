@@ -195,6 +195,15 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .help("Namespace to use for HBase tables"),
         )
         .arg(
+            Arg::with_name("thrift_connection_pool_size")
+                .long("thrift-connection-pool-size")
+                .value_name("NUMBER")
+                .takes_value(true)
+                .validator(is_parsable::<u32>)
+                .default_value("100")
+                .help("HBase Thrift connections to use in the connection pool"),
+        )
+        .arg(
             Arg::with_name("hdfs_url")
                 .long("hdfs-url")
                 .value_name("HDFS_URL")

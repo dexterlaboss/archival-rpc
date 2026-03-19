@@ -167,6 +167,7 @@ pub struct RpcHBaseConfig {
     pub enable_hbase_ledger_upload: bool,
     pub hbase_address: String,
     pub namespace: Option<String>,
+    pub thrift_connection_pool_size: u32,
     pub hdfs_url: String,
     pub hdfs_path: String,
     pub fallback_hbase_address: Option<String>,
@@ -197,6 +198,7 @@ impl Default for RpcHBaseConfig {
             enable_hbase_ledger_upload: false,
             hbase_address,
             namespace: None,
+            thrift_connection_pool_size: 100,
             hdfs_url,
             hdfs_path,
             fallback_hbase_address: None,
@@ -223,6 +225,7 @@ pub struct JsonRpcRequestProcessor {
     hbase_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
     fallback_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
     genesis_config: Option<GenesisConfig>,
+    rpc_node_client: Option<Arc<RpcClient>>,
 }
 
 impl Metadata for JsonRpcRequestProcessor {}
@@ -235,6 +238,7 @@ impl Clone for JsonRpcRequestProcessor {
             hbase_ledger_storage: self.hbase_ledger_storage.as_ref().map(|storage| storage.clone_box()),
             fallback_ledger_storage: self.fallback_ledger_storage.as_ref().map(|storage| storage.clone_box()),
             genesis_config: self.genesis_config.clone(),
+            rpc_node_client: self.rpc_node_client.clone(),
         }
     }
 }
@@ -274,12 +278,17 @@ impl JsonRpcRequestProcessor {
             None
         };
 
+        let rpc_node_client = config.rpc_node_config.rpc_node_address.as_ref().map(|addr| {
+            Arc::new(RpcClient::new(addr.clone()))
+        });
+
         Self {
             config,
             rpc_service_exit,
             hbase_ledger_storage,
             fallback_ledger_storage,
             genesis_config,
+            rpc_node_client,
         }
         // (
         //     Self {
@@ -576,8 +585,7 @@ impl JsonRpcRequestProcessor {
         let mut missing_sigs: Vec<Signature> = vec![];
         let mut missing_idxs: Vec<usize> = vec![];
 
-        if let Some(rpc_node_address) = self.config.rpc_node_config.rpc_node_address.as_ref() {
-            let client = RpcClient::new(rpc_node_address.clone());
+        if let Some(client) = &self.rpc_node_client {
             let response = if search_transaction_history {
                 client
                     .get_signature_statuses_with_history(&signatures)
@@ -597,7 +605,10 @@ impl JsonRpcRequestProcessor {
                     message,
                     data: None,
                 },
-                _ => Error::internal_error(),
+                e => {
+                    warn!("getSignatureStatuses to RPC node failed: {}", e);
+                    Error::internal_error()
+                }
             })?;
 
             context = Some(response.context);
@@ -653,7 +664,7 @@ impl JsonRpcRequestProcessor {
         let commitment = config.commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
 
-        info!(
+        debug!(
            "getSignaturesForAddress request received [address: {:?}, before: {:?}, until: {:?}], limit: {:?}",
            address, before, until, limit
         );

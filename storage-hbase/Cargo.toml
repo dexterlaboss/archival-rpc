@@ -11,6 +11,8 @@ edition = "2021"
 async-trait = { workspace = true }
 hbase-thrift = { workspace = true }
 thrift = { workspace = true }
+thrift-pool = { workspace = true, features = ["r2d2" ] }
+r2d2 = { workspace = true }
 
 backoff = { workspace = true }
 bincode = { workspace = true }

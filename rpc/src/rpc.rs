@@ -219,7 +219,7 @@ pub mod storage_rpc_full {
             signature_strs: Vec<String>,
             config: Option<RpcSignatureStatusConfig>,
         ) -> BoxFuture<Result<RpcResponse<Vec<Option<TransactionStatus>>>>> {
-            info!(
+            debug!(
                 "getSignatureStatuses request received: {:?}",
                 signature_strs.len()
             );

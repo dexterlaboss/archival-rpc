@@ -4,6 +4,9 @@ use {
     crate::{
         hbase::{
             deserialize_protobuf_or_bincode_cell_data,
+            HBase,
+            InputProtocol,
+            OutputProtocol,
         },
     },
     async_trait::async_trait,
@@ -76,8 +79,13 @@ use {
     chrono::{Utc, TimeZone, Datelike},
     tokio::task,
     prost::Message,
+    hbase_thrift::hbase::{HbaseSyncClient},
+    thrift_pool::{MakeThriftConnectionFromAddrs, ThriftConnectionManager},
+    r2d2::Pool,
 };
 
+type HbaseClient = HbaseSyncClient<InputProtocol, OutputProtocol>;
+type HbaseConnectionPool = Pool<ThriftConnectionManager<MakeThriftConnectionFromAddrs<HbaseClient, String>>>;
 
 // #[macro_use]
 // extern crate solana_metrics;
@@ -221,6 +229,7 @@ pub struct LedgerStorageConfig {
     pub address: String,
     pub fallback_address: Option<String>,
     pub namespace: Option<String>,
+    pub thrift_connection_pool_size: u32,
     pub hdfs_url: String,
     pub hdfs_path: String,
     // pub block_cache: Option<NonZeroUsize>,
@@ -243,6 +252,7 @@ impl Default for LedgerStorageConfig {
             address: DEFAULT_ADDRESS.to_string(),
             fallback_address: None,
             namespace: None,
+            thrift_connection_pool_size: 100,
             hdfs_url: DEFAULT_HDFS_URL.to_string(),
             hdfs_path: DEFAULT_HDFS_PATH.to_string(),
             // block_cache: None,
@@ -262,7 +272,10 @@ impl Default for LedgerStorageConfig {
 #[derive(Clone)]
 pub struct LedgerStorage {
     connection: hbase::HBaseConnection,
+    connection_pool: HbaseConnectionPool,
     fallback_connection: Option<hbase::HBaseConnection>,
+    fallback_connection_pool: Option<HbaseConnectionPool>,
+    namespace: Option<String>,
     hdfs_client: Option<Arc<Client>>,
     hdfs_path: String,
     // namespace: Option<String>,
@@ -301,6 +314,7 @@ impl LedgerStorage {
             address,
             fallback_address,
             namespace,
+            thrift_connection_pool_size,
             hdfs_url,
             hdfs_path,
             // block_cache,
@@ -323,6 +337,23 @@ impl LedgerStorage {
         )
             .await?;
 
+        let manager = ThriftConnectionManager::new(MakeThriftConnectionFromAddrs::new(address));
+        let connection_pool = r2d2::Pool::builder()
+            .max_size(thrift_connection_pool_size)
+            .build(manager)
+            .unwrap();
+    
+        let fallback_connection_pool = if let Some(fallback_addr) = fallback_address.clone() {
+            let manager =
+                ThriftConnectionManager::new(MakeThriftConnectionFromAddrs::new(fallback_addr));
+            let pool = r2d2::Pool::builder()
+                .max_size(thrift_connection_pool_size)
+                .build(manager)
+                .unwrap();
+            Some(pool)
+        } else {
+            None
+        };
 
         let fallback_connection = if let Some(fallback_addr) = fallback_address {
             Some(hbase::HBaseConnection::new(
@@ -396,7 +427,10 @@ impl LedgerStorage {
 
         Ok(Self {
             connection,
+            connection_pool,
+            fallback_connection_pool,
             fallback_connection,
+            namespace,
             hdfs_client,
             hdfs_path,
             // namespace,
@@ -905,7 +939,9 @@ impl LedgerStorageAdapter for LedgerStorage {
             return Ok(vec![]);
         }
 
-        let mut hbase = self.connection.client();
+        let mut hbase_conn = self.connection_pool.get().unwrap();
+        let mut hbase = HBase::new_borrowed(&mut *hbase_conn, self.namespace.clone());
+
         let keys = signatures
             .iter()
             .map(|signature| signature.to_string())
@@ -1295,8 +1331,11 @@ impl LedgerStorageAdapter for LedgerStorage {
         // info!("Using signature range [before: {:?}, until: {:?}]", before_signature.clone(), until_signature.clone());
 
         // inc_new_counter_debug!("storage-hbase-query", 1);
-        let mut hbase = self.connection.client();
         let address_prefix = format!("{address}/");
+
+        let namespace = self.namespace.clone();
+        let mut hbase_conn = self.connection_pool.get().unwrap();
+        let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace.clone());
 
         // Figure out where to start listing from based on `before_signature`
         let (first_slot, before_transaction_index, before_fallback) = match before_signature {
@@ -1306,8 +1345,9 @@ impl LedgerStorageAdapter for LedgerStorage {
                 match hbase.get_bincode_cell("tx", before_signature.to_string()).await {
                     Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
                     Err(hbase::Error::RowNotFound) => {
-                        if let Some(fallback_connection) = &self.fallback_connection {
-                            let mut hbase = fallback_connection.client();
+                        if let Some(connection_pool) = &self.fallback_connection_pool {
+                            let mut hbase_conn = connection_pool.get().unwrap();
+                            let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace.clone());
                             match hbase.get_bincode_cell("tx", before_signature.to_string()).await {
                                 Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
                                 Err(hbase::Error::RowNotFound) => return Ok(vec![]),
@@ -1336,8 +1376,9 @@ impl LedgerStorageAdapter for LedgerStorage {
                 match hbase.get_bincode_cell("tx", until_signature.to_string()).await {
                     Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
                     Err(hbase::Error::RowNotFound) => {
-                        if let Some(fallback_connection) = &self.fallback_connection {
-                            let mut hbase = fallback_connection.client();
+                        if let Some(connection_pool) = &self.fallback_connection_pool {
+                            let mut hbase_conn = connection_pool.get().unwrap();
+                            let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace.clone());
                             match hbase.get_bincode_cell("tx", until_signature.to_string()).await {
                                 Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
                                 Err(hbase::Error::RowNotFound) => return Ok(vec![]),

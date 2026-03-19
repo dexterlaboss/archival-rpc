@@ -55,7 +55,7 @@ impl<M: Metadata> Middleware<M> for MetricsMiddleware {
         F: FnOnce(Call, M) -> X + Send + Sync,
         X: Future<Output = Option<Output>> + Send + 'static,
     {
-        info!("Request on_call executed");
+        debug!("Request on_call executed");
         if let Call::MethodCall(ref request) = call {
             let method = request.method.clone();
             let metrics = self.metrics.clone();

@@ -129,6 +129,8 @@ hdfs-native = "0.11"
 anyhow = "1.0"
 hbase-thrift = "1.2.0"
 thrift = "0.17.0"
+thrift-pool = { version = "1.5.0", features = ["r2d2" ] }
+r2d2 = "0.8.10"
 
 dexter-ipfs-car = "0.3.0"
 

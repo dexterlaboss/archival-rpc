@@ -191,6 +191,61 @@ impl JsonRpcService {
                 None
             };
 
+        let tx_ledger_storage =
+            if let Some(RpcHBaseConfig {
+                            enable_hbase_ledger_upload: false,
+                            ref hbase_address_tx,
+                            ref namespace,
+                            ref hdfs_url,
+                            ref hdfs_path,
+                            timeout,
+                            use_md5_row_key_salt,
+                            hash_tx_full_row_keys,
+                            enable_full_tx_cache,
+                            ref cache_address,
+                            use_block_car_files,
+                            use_hbase_blocks_meta,
+                            use_webhdfs,
+                            ref webhdfs_url,
+                            ..
+                        }) = config.rpc_hbase_config
+            {
+                if let Some(tx_address) = hbase_address_tx {
+                    let tx_config = solana_storage_hbase::LedgerStorageConfig {
+                        read_only: true,
+                        timeout,
+                        address: tx_address.clone(),
+                        fallback_address: None,
+                        namespace: namespace.clone(),
+                        hdfs_url: hdfs_url.clone(),
+                        hdfs_path: hdfs_path.clone(),
+                        use_md5_row_key_salt,
+                        hash_tx_full_row_keys,
+                        enable_full_tx_cache,
+                        disable_tx_fallback: false,
+                        cache_address: cache_address.clone(),
+                        use_block_car_files,
+                        use_hbase_blocks_meta,
+                        use_webhdfs,
+                        webhdfs_url: webhdfs_url.clone(),
+                    };
+                    runtime
+                        .block_on(solana_storage_hbase::LedgerStorage::new_with_config(tx_config, metrics.clone()))
+                        .map(|storage| {
+                            info!("TX ledger storage initialized (hbase_address_tx)");
+                            Some(Box::new(storage) as Box<dyn LedgerStorageAdapter>)
+                        })
+                        .unwrap_or_else(|err| {
+                            error!("Failed to initialize TX ledger storage: {:?}", err);
+                            None
+                        })
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
         let full_api = config.full_api;
         let max_request_body_size = config
             .max_request_body_size
@@ -201,6 +256,7 @@ impl JsonRpcService {
             rpc_service_exit.clone(),
             hbase_ledger_storage,
             fallback_ledger_storage,
+            tx_ledger_storage,
         );
 
         #[cfg(test)]

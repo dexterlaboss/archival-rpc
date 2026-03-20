@@ -1638,6 +1638,59 @@ impl LedgerStorageAdapter for LedgerStorage {
         Ok(())
     }
 
+    async fn get_transactions_for_address(
+        &self,
+        address: &Pubkey,
+        before_signature: Option<&Signature>,
+        until_signature: Option<&Signature>,
+        limit: usize,
+        reversed: Option<bool>,
+    ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, Option<ConfirmedTransactionWithStatusMeta>)>> {
+        // Step 1: range scan on tx-by-addr (one HBase call)
+        let sig_results = self
+            .get_confirmed_signatures_for_address(address, before_signature, until_signature, limit, reversed)
+            .await?;
+
+        if sig_results.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Step 2: batch fetch all tx_full rows (one HBase call)
+        let keys: Vec<String> = sig_results
+            .iter()
+            .map(|(sig_status, _)| signature_to_tx_full_key(&sig_status.signature, self.hash_tx_full_row_keys))
+            .collect();
+
+        let mut hbase = self.connection.client();
+        let rows = hbase.get_rows_data("tx_full", &keys).await
+            .map_err(|e| Error::StorageBackendError(Box::new(e)))?;
+
+        // Step 3: deserialize and pair with signature statuses
+        let results = sig_results
+            .into_iter()
+            .zip(rows.into_iter())
+            .zip(keys.into_iter())
+            .map(|(((sig_status, _index), row_data), key)| {
+                let tx = row_data.and_then(|data| {
+                    match deserialize_protobuf_or_bincode_cell_data::<
+                        StoredConfirmedTransactionWithStatusMeta,
+                        generated::ConfirmedTransactionWithStatusMeta,
+                    >(&data, "tx_full", key) {
+                        Ok(hbase::CellData::Bincode(tx)) => Some(tx.into()),
+                        Ok(hbase::CellData::Protobuf(tx)) => tx.try_into().ok(),
+                        Err(e) => {
+                            warn!("Failed to deserialize tx_full for {}: {:?}", sig_status.signature, e);
+                            None
+                        }
+                    }
+                });
+                (sig_status, tx)
+            })
+            .collect();
+
+        Ok(results)
+    }
+
     fn clone_box(&self) -> Box<dyn LedgerStorageAdapter> {
         Box::new(self.clone())
     }

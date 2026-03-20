@@ -188,6 +188,14 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .help("Address of fallback HBase instance to use"),
         )
         .arg(
+            Arg::with_name("hbase_address_tx")
+                .long("rpc-hbase-address-tx")
+                .value_name("ADDRESS")
+                .takes_value(true)
+                .hidden(true)
+                .help("Address of dedicated HBase instance for full transaction lookups (tx_full table)"),
+        )
+        .arg(
             Arg::with_name("hbase_namespace")
                 .long("hbase-namespace")
                 .value_name("NAMESPACE")

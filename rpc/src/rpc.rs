@@ -6,6 +6,7 @@ use {
             verify_signature,
             verify_pubkey,
             verify_and_parse_signatures_for_address_params,
+            MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT,
         },
         deprecated::*,
     },
@@ -393,6 +394,13 @@ pub mod storage_rpc_full {
                 commitment,
                 min_context_slot,
             } = config.unwrap_or_default();
+            // Cap at MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT (lower than the signatures limit
+            // since full tx blobs are much larger)
+            let limit = Some(
+                limit
+                    .unwrap_or(MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT)
+                    .min(MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT),
+            );
             let verification =
                 verify_and_parse_signatures_for_address_params(address, before, until, limit);
 

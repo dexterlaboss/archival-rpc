@@ -1691,6 +1691,48 @@ impl LedgerStorageAdapter for LedgerStorage {
         Ok(results)
     }
 
+    async fn get_confirmed_transactions_batch(
+        &self,
+        signatures: &[Signature],
+    ) -> Result<Vec<Option<ConfirmedTransactionWithStatusMeta>>> {
+        if signatures.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let keys: Vec<String> = signatures
+            .iter()
+            .map(|sig| signature_to_tx_full_key(sig, self.hash_tx_full_row_keys))
+            .collect();
+
+        let mut hbase = self.connection.client();
+        let rows = hbase
+            .get_rows_data("tx_full", &keys)
+            .await
+            .map_err(|e| Error::StorageBackendError(Box::new(e)))?;
+
+        let results = rows
+            .into_iter()
+            .zip(keys.iter())
+            .map(|(row_data, key)| {
+                row_data.and_then(|data| {
+                    match deserialize_protobuf_or_bincode_cell_data::<
+                        StoredConfirmedTransactionWithStatusMeta,
+                        generated::ConfirmedTransactionWithStatusMeta,
+                    >(&data, "tx_full", key.clone()) {
+                        Ok(hbase::CellData::Bincode(tx)) => Some(tx.into()),
+                        Ok(hbase::CellData::Protobuf(tx)) => tx.try_into().ok(),
+                        Err(e) => {
+                            warn!("Failed to deserialize tx_full for key {}: {:?}", key, e);
+                            None
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        Ok(results)
+    }
+
     fn clone_box(&self) -> Box<dyn LedgerStorageAdapter> {
         Box::new(self.clone())
     }

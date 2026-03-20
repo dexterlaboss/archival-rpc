@@ -174,6 +174,7 @@ pub struct RpcHBaseConfig {
     pub hdfs_url: String,
     pub hdfs_path: String,
     pub fallback_hbase_address: Option<String>,
+    pub hbase_address_tx: Option<String>,
     pub timeout: Option<Duration>,
     // pub block_cache: Option<NonZeroUsize>,
     pub use_md5_row_key_salt: bool,
@@ -205,6 +206,7 @@ impl Default for RpcHBaseConfig {
             hdfs_url,
             hdfs_path,
             fallback_hbase_address: None,
+            hbase_address_tx: None,
             timeout: None,
             // block_cache: None,
             use_md5_row_key_salt: false,
@@ -228,6 +230,7 @@ pub struct JsonRpcRequestProcessor {
     rpc_service_exit: Arc<RwLock<Exit>>,
     hbase_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
     fallback_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
+    tx_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
     genesis_config: Option<GenesisConfig>,
     rpc_node_client: Option<Arc<RpcClient>>,
 }
@@ -242,6 +245,7 @@ impl Clone for JsonRpcRequestProcessor {
             rpc_service_exit: Arc::clone(&self.rpc_service_exit),
             hbase_ledger_storage: self.hbase_ledger_storage.as_ref().map(|storage| storage.clone_box()),
             fallback_ledger_storage: self.fallback_ledger_storage.as_ref().map(|storage| storage.clone_box()),
+            tx_ledger_storage: self.tx_ledger_storage.as_ref().map(|storage| storage.clone_box()),
             genesis_config: self.genesis_config.clone(),
             rpc_node_client: self.rpc_node_client.clone(),
         }
@@ -261,6 +265,7 @@ impl JsonRpcRequestProcessor {
         rpc_service_exit: Arc<RwLock<Exit>>,
         hbase_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
         fallback_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
+        tx_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
     ) -> Self {
     // ) -> (Self, Receiver<TransactionInfo>) {
     //     let (_sender, receiver) = unbounded();
@@ -294,6 +299,7 @@ impl JsonRpcRequestProcessor {
             rpc_service_exit,
             hbase_ledger_storage,
             fallback_ledger_storage,
+            tx_ledger_storage,
             genesis_config,
             rpc_node_client,
         }
@@ -732,6 +738,98 @@ impl JsonRpcRequestProcessor {
         } else {
             Err(RpcCustomError::TransactionHistoryNotAvailable.into())
         }
+    }
+
+    pub async fn get_transactions_for_address(
+        &self,
+        address: Pubkey,
+        before: Option<Signature>,
+        until: Option<Signature>,
+        limit: usize,
+        reversed: Option<bool>,
+        encoding: Option<UiTransactionEncoding>,
+        max_supported_transaction_version: Option<u8>,
+        config: RpcContextConfig,
+    ) -> Result<Vec<EncodedConfirmedTransactionWithStatusMeta>> {
+        let commitment = config.commitment.unwrap_or_default();
+        check_is_at_least_confirmed(commitment)?;
+
+        info!(
+            "getTransactionsForAddress request received [address: {:?}, before: {:?}, until: {:?}, limit: {:?}]",
+            address, before, until, limit
+        );
+
+        if !self.config.enable_rpc_transaction_history {
+            return Err(RpcCustomError::TransactionHistoryNotAvailable.into());
+        }
+
+        let encoding = encoding.unwrap_or(UiTransactionEncoding::Json);
+
+        // Step 1: get signatures (one range scan on tx-by-addr)
+        let sig_results = if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
+            hbase_ledger_storage
+                .get_confirmed_signatures_for_address(
+                    &address,
+                    before.as_ref(),
+                    until.as_ref(),
+                    limit,
+                    reversed,
+                )
+                .await
+                .unwrap_or_default()
+        } else {
+            return Ok(vec![]);
+        };
+
+        if sig_results.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Step 2: fetch all transactions in parallel.
+        // Prefer tx_ledger_storage (dedicated tx HBase) if configured, otherwise
+        // fall through primary then fallback.
+        let tx_storage = self.tx_ledger_storage.as_ref();
+        let primary = self.hbase_ledger_storage.as_ref();
+        let fallback = self.fallback_ledger_storage.as_ref();
+
+        let fetch_futures: Vec<_> = sig_results
+            .iter()
+            .map(|(sig_status, _)| {
+                let sig = sig_status.signature;
+                async move {
+                    if let Some(storage) = tx_storage {
+                        if let Ok(Some(tx)) = storage.get_confirmed_transaction(&sig).await {
+                            return Some(tx);
+                        }
+                    }
+                    if let Some(storage) = primary {
+                        if let Ok(Some(tx)) = storage.get_confirmed_transaction(&sig).await {
+                            return Some(tx);
+                        }
+                    }
+                    if let Some(storage) = fallback {
+                        if let Ok(Some(tx)) = storage.get_confirmed_transaction(&sig).await {
+                            return Some(tx);
+                        }
+                    }
+                    None
+                }
+            })
+            .collect();
+
+        let tx_results = futures::future::join_all(fetch_futures).await;
+
+        let mut encoded = Vec::with_capacity(tx_results.len());
+        for tx_opt in tx_results {
+            if let Some(tx) = tx_opt {
+                match tx.encode(encoding, max_supported_transaction_version).map_err(RpcCustomError::from) {
+                    Ok(encoded_tx) => encoded.push(encoded_tx),
+                    Err(e) => return Err(e.into()),
+                }
+            }
+        }
+
+        Ok(encoded)
     }
 
     pub async fn get_first_available_block(&self) -> Slot {

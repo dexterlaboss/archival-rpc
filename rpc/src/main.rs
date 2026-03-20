@@ -148,6 +148,15 @@ fn main() {
         } else {
             None
         },
+        hbase_address_tx: if matches.is_present("hbase_address_tx") {
+            Some(value_t_or_exit!(
+                matches,
+                "hbase_address_tx",
+                String
+            ))
+        } else {
+            None
+        },
         timeout: None,
         // block_cache: if matches.is_present("block_cache") {
         //     Some(value_t_or_exit!(

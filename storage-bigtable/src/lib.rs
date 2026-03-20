@@ -874,6 +874,17 @@ impl LedgerStorageAdapter for LedgerStorage {
         Err(Error::BlockNotFound(slot))
     }
 
+    async fn get_transactions_for_address(
+        &self,
+        _address: &Pubkey,
+        _before_signature: Option<&Signature>,
+        _until_signature: Option<&Signature>,
+        _limit: usize,
+        _reversed: Option<bool>,
+    ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, Option<ConfirmedTransactionWithStatusMeta>)>> {
+        Err(Error::UnsupportedTransactionEncoding)
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

@@ -974,7 +974,8 @@ impl LedgerStorageAdapter for LedgerStorage {
         );
         // inc_new_counter_debug!("storage-hbase-query", 1);
 
-        let mut hbase = self.connection.client();
+        let mut hbase_conn = self.connection_pool.get().unwrap();
+        let mut hbase = HBase::new_borrowed(&mut *hbase_conn, self.namespace.clone());
 
         let tx_cell_data = hbase
             .get_protobuf_or_bincode_cell::<StoredConfirmedTransactionWithStatusMeta, generated::ConfirmedTransactionWithStatusMeta>(

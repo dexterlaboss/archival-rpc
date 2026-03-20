@@ -885,6 +885,13 @@ impl LedgerStorageAdapter for LedgerStorage {
         Err(Error::UnsupportedTransactionEncoding)
     }
 
+    async fn get_confirmed_transactions_batch(
+        &self,
+        _signatures: &[Signature],
+    ) -> Result<Vec<Option<ConfirmedTransactionWithStatusMeta>>> {
+        Err(Error::UnsupportedTransactionEncoding)
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

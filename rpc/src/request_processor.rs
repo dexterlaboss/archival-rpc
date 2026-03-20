@@ -80,6 +80,7 @@ pub const MAX_REQUEST_BODY_SIZE: usize = 50 * (1 << 10); // 50kB
 pub const MAX_GENESIS_ARCHIVE_UNPACKED_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 
 pub const MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT: usize = 10_000;
+pub const MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT: usize = 1_000;
 
 type Rewards = Vec<Reward>;
 
@@ -765,7 +766,8 @@ impl JsonRpcRequestProcessor {
 
         let encoding = encoding.unwrap_or(UiTransactionEncoding::Json);
 
-        // Step 1: get signatures (one range scan on tx-by-addr)
+        // Step 1: range scan on tx-by-addr (one HBase call)
+        let t0 = Instant::now();
         let sig_results = if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
             hbase_ledger_storage
                 .get_confirmed_signatures_for_address(
@@ -780,44 +782,62 @@ impl JsonRpcRequestProcessor {
         } else {
             return Ok(vec![]);
         };
+        let sig_elapsed = t0.elapsed();
 
         if sig_results.is_empty() {
+            info!("getTransactionsForAddress: sig scan took {:?}, 0 results", sig_elapsed);
             return Ok(vec![]);
         }
 
-        // Step 2: fetch all transactions in parallel.
-        // Prefer tx_ledger_storage (dedicated tx HBase) if configured, otherwise
-        // fall through primary then fallback.
-        let tx_storage = self.tx_ledger_storage.as_ref();
-        let primary = self.hbase_ledger_storage.as_ref();
-        let fallback = self.fallback_ledger_storage.as_ref();
+        let signatures: Vec<Signature> = sig_results.iter().map(|(s, _)| s.signature).collect();
 
-        let fetch_futures: Vec<_> = sig_results
-            .iter()
-            .map(|(sig_status, _)| {
-                let sig = sig_status.signature;
-                async move {
-                    if let Some(storage) = tx_storage {
-                        if let Ok(Some(tx)) = storage.get_confirmed_transaction(&sig).await {
-                            return Some(tx);
+        // Step 2: batch-fetch full transactions (single HBase getRows call)
+        let t1 = Instant::now();
+        let tx_results: Vec<Option<ConfirmedTransactionWithStatusMeta>> =
+            if let Some(tx_storage) = &self.tx_ledger_storage {
+                // Dedicated tx HBase: single batch multi-get on tx_full
+                tx_storage
+                    .get_confirmed_transactions_batch(&signatures)
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!("Batch tx fetch failed, results will be empty: {:?}", e);
+                        vec![None; signatures.len()]
+                    })
+            } else {
+                // Fallback: parallel individual lookups across primary + fallback storage
+                let primary = self.hbase_ledger_storage.as_ref();
+                let fallback = self.fallback_ledger_storage.as_ref();
+                let fetch_futures: Vec<_> = signatures
+                    .iter()
+                    .map(|sig| {
+                        let sig = *sig;
+                        async move {
+                            if let Some(storage) = primary {
+                                if let Ok(Some(tx)) = storage.get_confirmed_transaction(&sig).await {
+                                    return Some(tx);
+                                }
+                            }
+                            if let Some(storage) = fallback {
+                                if let Ok(Some(tx)) = storage.get_confirmed_transaction(&sig).await {
+                                    return Some(tx);
+                                }
+                            }
+                            None
                         }
-                    }
-                    if let Some(storage) = primary {
-                        if let Ok(Some(tx)) = storage.get_confirmed_transaction(&sig).await {
-                            return Some(tx);
-                        }
-                    }
-                    if let Some(storage) = fallback {
-                        if let Ok(Some(tx)) = storage.get_confirmed_transaction(&sig).await {
-                            return Some(tx);
-                        }
-                    }
-                    None
-                }
-            })
-            .collect();
+                    })
+                    .collect();
+                futures::future::join_all(fetch_futures).await
+            };
+        let tx_elapsed = t1.elapsed();
 
-        let tx_results = futures::future::join_all(fetch_futures).await;
+        info!(
+            "getTransactionsForAddress: sig scan {:?} ({} sigs), tx fetch {:?} ({} txs), total {:?}",
+            sig_elapsed,
+            sig_results.len(),
+            tx_elapsed,
+            tx_results.iter().filter(|t| t.is_some()).count(),
+            t0.elapsed(),
+        );
 
         let mut encoded = Vec::with_capacity(tx_results.len());
         for tx_opt in tx_results {

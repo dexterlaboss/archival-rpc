@@ -485,6 +485,13 @@ pub trait LedgerStorageAdapter: Send + Sync {
         reversed: Option<bool>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, Option<ConfirmedTransactionWithStatusMeta>)>>;
 
+    /// Batch-fetch full transaction data for a list of signatures in a single HBase call.
+    /// Returns one entry per signature, None if not found.
+    async fn get_confirmed_transactions_batch(
+        &self,
+        signatures: &[Signature],
+    ) -> Result<Vec<Option<ConfirmedTransactionWithStatusMeta>>>;
+
     fn get_signatures_forward(
         &self,
         address: &Pubkey,

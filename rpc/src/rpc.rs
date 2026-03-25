@@ -15,6 +15,7 @@ use {
             RpcTransactionFilters,
             RpcBlockTimeRange,
             RpcSlotRange,
+            TokenAccountsFilter,
         },
         deprecated::*,
     },

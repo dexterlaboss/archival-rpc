@@ -39,6 +39,7 @@ use {
         ConfirmedBlock,
         ConfirmedTransactionStatusWithSignature,
         ConfirmedTransactionWithStatusMeta,
+        TransactionWithStatusMeta,
     },
     solana_transaction_status_client_types::{
         EncodedConfirmedTransactionWithStatusMeta,
@@ -127,12 +128,25 @@ pub struct RpcSlotRange {
     pub lt: Option<Slot>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum TokenAccountsFilter {
+    /// No token account filtering (include everything) — default
+    #[default]
+    None,
+    /// Only transactions where at least one token balance changed
+    BalanceChanged,
+    /// All transactions that involve any token account
+    All,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcTransactionFilters {
     pub status: Option<TransactionStatusFilter>,
     pub block_time: Option<RpcBlockTimeRange>,
     pub slot: Option<RpcSlotRange>,
+    pub token_accounts: Option<TokenAccountsFilter>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -152,6 +166,32 @@ pub fn block_time_to_slot(block_time: i64) -> Slot {
         0
     } else {
         (elapsed as f64 * SLOTS_PER_SECOND) as Slot
+    }
+}
+
+/// Returns true if the transaction has any token account involvement.
+fn tx_has_token_accounts(tx: &ConfirmedTransactionWithStatusMeta) -> bool {
+    if let TransactionWithStatusMeta::Complete(ref vtx) = tx.tx_with_meta {
+        vtx.meta.pre_token_balances.as_ref().map_or(false, |v| !v.is_empty())
+            || vtx.meta.post_token_balances.as_ref().map_or(false, |v| !v.is_empty())
+    } else {
+        false
+    }
+}
+
+/// Returns true if at least one token balance changed between pre and post.
+fn tx_has_token_balance_changed(tx: &ConfirmedTransactionWithStatusMeta) -> bool {
+    if let TransactionWithStatusMeta::Complete(ref vtx) = tx.tx_with_meta {
+        let pre = vtx.meta.pre_token_balances.as_deref().unwrap_or(&[]);
+        let post = vtx.meta.post_token_balances.as_deref().unwrap_or(&[]);
+        if pre.len() != post.len() {
+            return true;
+        }
+        pre.iter().zip(post.iter()).any(|(p, q)| {
+            p.account_index != q.account_index || p.ui_token_amount.amount != q.ui_token_amount.amount
+        })
+    } else {
+        false
     }
 }
 
@@ -893,10 +933,16 @@ impl JsonRpcRequestProcessor {
             return Ok(GetTransactionsForAddressResponse { data: vec![], pagination_token: None });
         }
 
-        let pagination_token = sig_results.last().map(|(s, _)| s.signature.to_string());
+        // Token account filtering requires full tx data even in signatures mode
+        let token_filter = filters.as_ref().and_then(|f| f.token_accounts.as_ref());
+        let needs_full_for_token_filter = matches!(
+            token_filter,
+            Some(TokenAccountsFilter::All) | Some(TokenAccountsFilter::BalanceChanged)
+        );
 
-        // Signatures-only mode: skip tx fetch, return lightweight sig metadata
-        if details_mode == TransactionDetailsMode::Signatures {
+        // Signatures-only mode: skip tx fetch unless token filter needs full data
+        if details_mode == TransactionDetailsMode::Signatures && !needs_full_for_token_filter {
+            let pagination_token = sig_results.last().map(|(s, _)| s.signature.to_string());
             info!("getTransactionsForAddress: sig scan {:?} ({} sigs, signatures mode), total {:?}",
                 sig_elapsed, sig_results.len(), t0.elapsed());
             let data = sig_results
@@ -949,12 +995,43 @@ impl JsonRpcRequestProcessor {
             };
         let tx_elapsed = t1.elapsed();
 
+        // Apply token accounts filter (post-fetch, may return fewer than limit)
+        let (sig_results, tx_results): (Vec<_>, Vec<_>) = sig_results
+            .into_iter()
+            .zip(tx_results.into_iter())
+            .filter(|(_, tx_opt)| match token_filter {
+                Some(TokenAccountsFilter::All) => {
+                    tx_opt.as_ref().map_or(false, tx_has_token_accounts)
+                }
+                Some(TokenAccountsFilter::BalanceChanged) => {
+                    tx_opt.as_ref().map_or(false, tx_has_token_balance_changed)
+                }
+                _ => true,
+            })
+            .unzip();
+
+        let pagination_token = sig_results.last().map(|(s, _)| s.signature.to_string());
+
         info!(
-            "getTransactionsForAddress: sig scan {:?} ({} sigs), tx fetch {:?} ({} txs), total {:?}",
-            sig_elapsed, sig_results.len(), tx_elapsed,
+            "getTransactionsForAddress: sig scan {:?} ({} sigs), tx fetch {:?} ({} txs, {} after token filter), total {:?}",
+            sig_elapsed, signatures.len(), tx_elapsed,
             tx_results.iter().filter(|t| t.is_some()).count(),
+            tx_results.len(),
             t0.elapsed(),
         );
+
+        // If we only fetched full data for the token filter, return signatures
+        if details_mode == TransactionDetailsMode::Signatures {
+            let data = sig_results
+                .into_iter()
+                .map(|(s, _)| {
+                    let mut item: RpcConfirmedTransactionStatusWithSignature = s.into();
+                    item.confirmation_status = Some(TransactionConfirmationStatus::Finalized);
+                    serde_json::to_value(item).unwrap_or(serde_json::Value::Null)
+                })
+                .collect();
+            return Ok(GetTransactionsForAddressResponse { data, pagination_token });
+        }
 
         let mut data = Vec::with_capacity(tx_results.len());
         for tx_opt in tx_results {

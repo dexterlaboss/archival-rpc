@@ -7,7 +7,6 @@ use {
             verify_pubkey,
             verify_and_parse_signatures_for_address_params,
             MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT,
-            MAX_GET_TRANSACTIONS_FOR_ADDRESS_FULL_LIMIT,
             TransactionDetailsMode,
             TransactionStatusFilter,
             GetTransactionsForAddressResponse,
@@ -415,13 +414,7 @@ pub mod storage_rpc_full {
             let details_mode = transaction_details.unwrap_or_default();
             let status_filter = filter_by_status.unwrap_or_default();
 
-            // Cap limit based on details mode (full txs are heavier)
-            let max_limit = if details_mode == TransactionDetailsMode::Full {
-                MAX_GET_TRANSACTIONS_FOR_ADDRESS_FULL_LIMIT
-            } else {
-                MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT
-            };
-            let limit = Some(limit.unwrap_or(max_limit).min(max_limit));
+            let limit = Some(limit.unwrap_or(MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT).min(MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT));
 
             let verification =
                 verify_and_parse_signatures_for_address_params(address, before, until, limit);

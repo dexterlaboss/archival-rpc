@@ -575,6 +575,8 @@ impl LedgerStorageAdapter for LedgerStorage {
         until_signature: Option<&Signature>,
         limit: usize,
         _reversed: Option<bool>,
+        _before_slot: Option<Slot>,
+        _until_slot: Option<Slot>,
     ) -> Result<
         Vec<(
             ConfirmedTransactionStatusWithSignature,
@@ -709,7 +711,9 @@ impl LedgerStorageAdapter for LedgerStorage {
         _address: &Pubkey,
         _before_signature: Option<&Signature>,
         _until_signature: Option<&Signature>,
-        _limit: usize
+        _limit: usize,
+        _before_slot: Option<Slot>,
+        _until_slot: Option<Slot>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {
         Err(Error::StorageBackendError(Box::new(std::io::Error::new(
             std::io::ErrorKind::Other,
@@ -722,7 +726,9 @@ impl LedgerStorageAdapter for LedgerStorage {
         _address: &Pubkey,
         _before_signature: Option<&Signature>,
         _until_signature: Option<&Signature>,
-        _limit: usize
+        _limit: usize,
+        _before_slot: Option<Slot>,
+        _until_slot: Option<Slot>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {
         Err(Error::StorageBackendError(Box::new(std::io::Error::new(
             std::io::ErrorKind::Other,

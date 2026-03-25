@@ -80,12 +80,13 @@ pub const MAX_GENESIS_ARCHIVE_UNPACKED_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 
 pub const MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT: usize = 10_000;
 pub const MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT: usize = 1_000;
+pub const MAX_GET_TRANSACTIONS_FOR_ADDRESS_FULL_LIMIT: usize = 100;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum TransactionDetailsMode {
-    #[default]
     Full,
+    #[default]
     Signatures,
 }
 
@@ -106,11 +107,24 @@ pub enum SortOrder {
     Asc,
 }
 
+/// Comparison-operator range for blockTime (Unix timestamps).
+/// Matches Helius filter format: filters.blockTime.gte / .gt / .lte / .lt
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct RpcBlockTimeRange {
-    pub before: Option<i64>,
-    pub after: Option<i64>,
+    pub gte: Option<i64>,
+    pub gt: Option<i64>,
+    pub lte: Option<i64>,
+    pub lt: Option<i64>,
+}
+
+/// Comparison-operator range for slot numbers.
+/// Matches Helius filter format: filters.slot.gte / .gt / .lte / .lt
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RpcSlotRange {
+    pub gte: Option<Slot>,
+    pub gt: Option<Slot>,
+    pub lte: Option<Slot>,
+    pub lt: Option<Slot>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -118,6 +132,7 @@ pub struct RpcBlockTimeRange {
 pub struct RpcTransactionFilters {
     pub status: Option<TransactionStatusFilter>,
     pub block_time: Option<RpcBlockTimeRange>,
+    pub slot: Option<RpcSlotRange>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -800,12 +815,29 @@ impl JsonRpcRequestProcessor {
         // Derive `reversed` from sort_order (Asc = oldest first = forward scan)
         let reversed = sort_order.as_ref().map(|o| matches!(o, SortOrder::Asc));
 
-        // Extract slot bounds from blockTime range filter
+        // Extract slot bounds from slot/blockTime range filters.
+        // In a backward scan: before_slot = upper bound (newest), until_slot = lower bound (oldest).
+        // lte/lt blockTime → upper bound → before_slot
+        // gte/gt blockTime → lower bound → until_slot
         let (before_slot, until_slot) = if let Some(ref f) = filters {
-            let bt = f.block_time.as_ref();
-            let bslot = bt.and_then(|b| b.before).map(block_time_to_slot);
-            let uslot = bt.and_then(|b| b.after).map(block_time_to_slot);
-            (bslot, uslot)
+            // blockTime → slot approximation
+            let bt_upper: Option<Slot> = f.block_time.as_ref().and_then(|b| {
+                b.lte.map(block_time_to_slot).or_else(|| b.lt.map(|t| block_time_to_slot(t).saturating_sub(1)))
+            });
+            let bt_lower: Option<Slot> = f.block_time.as_ref().and_then(|b| {
+                b.gte.map(block_time_to_slot).or_else(|| b.gt.map(|t| block_time_to_slot(t) + 1))
+            });
+            // Direct slot bounds
+            let sl_upper: Option<Slot> = f.slot.as_ref().and_then(|s| {
+                s.lte.or_else(|| s.lt.map(|v| v.saturating_sub(1)))
+            });
+            let sl_lower: Option<Slot> = f.slot.as_ref().and_then(|s| {
+                s.gte.or_else(|| s.gt.map(|v| v + 1))
+            });
+            // Slot filter takes precedence over blockTime approximation
+            let before_slot = sl_upper.or(bt_upper);
+            let until_slot = sl_lower.or(bt_lower);
+            (before_slot, until_slot)
         } else {
             (None, None)
         };

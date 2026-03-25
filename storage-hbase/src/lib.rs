@@ -1158,6 +1158,8 @@ impl LedgerStorageAdapter for LedgerStorage {
         until_signature: Option<&Signature>,
         limit: usize,
         reversed: Option<bool>,
+        before_slot: Option<Slot>,
+        until_slot: Option<Slot>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {
         self.runtime.spawn_blocking({
             let self_clone = self.clone();
@@ -1166,9 +1168,9 @@ impl LedgerStorageAdapter for LedgerStorage {
             let until_signature = until_signature.copied();
         move || {
         if reversed.unwrap_or(false) {
-            self_clone.get_signatures_forward(&address, before_signature.as_ref(), until_signature.as_ref(), limit)
+            self_clone.get_signatures_forward(&address, before_signature.as_ref(), until_signature.as_ref(), limit, before_slot, until_slot)
         } else {
-            self_clone.get_signatures_backward(&address, before_signature.as_ref(), until_signature.as_ref(), limit)
+            self_clone.get_signatures_backward(&address, before_signature.as_ref(), until_signature.as_ref(), limit, before_slot, until_slot)
         }
         }}).await.map_err(Error::TokioJoinError)?
     }
@@ -1179,6 +1181,8 @@ impl LedgerStorageAdapter for LedgerStorage {
         before_signature: Option<&Signature>,
         until_signature: Option<&Signature>,
         limit: usize,
+        before_slot: Option<Slot>,
+        until_slot: Option<Slot>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {
         let address_prefix = format!("{address}/");
 
@@ -1186,7 +1190,9 @@ impl LedgerStorageAdapter for LedgerStorage {
         let mut hbase_conn = self.connection_pool.get().unwrap();
         let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace.clone());
 
-        let (first_slot, before_transaction_index, before_fallback) = match until_signature {
+        let (first_slot, before_transaction_index, before_fallback) = if let Some(slot) = until_slot {
+            (slot, u32::MAX, false)
+        } else { match until_signature {
             None => (0, u32::MAX, false),
             Some(until_signature) => {
                 match hbase.get_bincode_cell("tx", until_signature.to_string()) {
@@ -1207,9 +1213,11 @@ impl LedgerStorageAdapter for LedgerStorage {
                     Err(err) => return Err(err.into()),
                 }
             }
-        };
+        } }; // closes if let Some(slot) = until_slot / match until_signature
 
-        let (last_slot, until_transaction_index, until_fallback) = match before_signature {
+        let (last_slot, until_transaction_index, until_fallback) = if let Some(slot) = before_slot {
+            (slot, 0, false)
+        } else { match before_signature {
             None => (Slot::MAX, 0, false),
             Some(before_signature) => {
                 match hbase.get_bincode_cell("tx", before_signature.to_string()) {
@@ -1230,7 +1238,7 @@ impl LedgerStorageAdapter for LedgerStorage {
                     Err(err) => return Err(err.into()),
                 }
             }
-        };
+        } }; // closes if let Some(slot) = before_slot / match before_signature
 
         debug!("Got starting slot: {:?}, index: {:?}, using tx_full fallback: {:?}",
             first_slot.clone(),
@@ -1356,30 +1364,26 @@ impl LedgerStorageAdapter for LedgerStorage {
         before_signature: Option<&Signature>,
         until_signature: Option<&Signature>,
         limit: usize,
+        before_slot: Option<Slot>,
+        until_slot: Option<Slot>,
     ) -> Result<
         Vec<(
             ConfirmedTransactionStatusWithSignature,
             u32,
         )>,
     > {
-        // info!(
-        //     "LedgerStorage::get_confirmed_signatures_for_address: {:?}",
-        //     address
-        // );
-        // info!("Using signature range [before: {:?}, until: {:?}]", before_signature.clone(), until_signature.clone());
-
-        // inc_new_counter_debug!("storage-hbase-query", 1);
         let address_prefix = format!("{address}/");
 
         let namespace = self.namespace.clone();
         let mut hbase_conn = self.connection_pool.get().unwrap();
         let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace.clone());
 
-        // Figure out where to start listing from based on `before_signature`
-        let (first_slot, before_transaction_index, before_fallback) = match before_signature {
+        // Figure out where to start listing from based on `before_signature` (or slot override)
+        let (first_slot, before_transaction_index, before_fallback) = if let Some(slot) = before_slot {
+            (slot, 0, false)
+        } else { match before_signature {
             None => (Slot::MAX, 0, false),
             Some(before_signature) => {
-                // Try fetching from `tx` first
                 match hbase.get_bincode_cell("tx", before_signature.to_string()) {
                     Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
                     Err(hbase::Error::RowNotFound) => {
@@ -1398,7 +1402,7 @@ impl LedgerStorageAdapter for LedgerStorage {
                     Err(err) => return Err(err.into()),
                 }
             }
-        };
+        } };
 
         debug!("Got starting slot: {:?}, index: {:?}, using tx_full fallback: {:?}",
             first_slot.clone(),
@@ -1406,11 +1410,12 @@ impl LedgerStorageAdapter for LedgerStorage {
             before_fallback
         );
 
-        // Figure out where to end listing from based on `until_signature`
-        let (last_slot, until_transaction_index, until_fallback) = match until_signature {
+        // Figure out where to end listing from based on `until_signature` (or slot override)
+        let (last_slot, until_transaction_index, until_fallback) = if let Some(slot) = until_slot {
+            (slot, u32::MAX, false)
+        } else { match until_signature {
             None => (0, u32::MAX, false),
             Some(until_signature) => {
-                // Try fetching from `tx` first
                 match hbase.get_bincode_cell("tx", until_signature.to_string()) {
                     Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
                     Err(hbase::Error::RowNotFound) => {
@@ -1429,7 +1434,7 @@ impl LedgerStorageAdapter for LedgerStorage {
                     Err(err) => return Err(err.into()),
                 }
             }
-        };
+        } };
 
         debug!("Got ending slot: {:?}, index: {:?}, using tx_full fallback: {:?}",
             last_slot.clone(),
@@ -1726,7 +1731,7 @@ impl LedgerStorageAdapter for LedgerStorage {
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, Option<ConfirmedTransactionWithStatusMeta>)>> {
         // Step 1: range scan on tx-by-addr (one HBase call)
         let sig_results = self
-            .get_confirmed_signatures_for_address(address, before_signature, until_signature, limit, reversed)
+            .get_confirmed_signatures_for_address(address, before_signature, until_signature, limit, reversed, None, None)
             .await?;
 
         if sig_results.is_empty() {

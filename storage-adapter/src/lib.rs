@@ -494,7 +494,7 @@ pub trait LedgerStorageAdapter: Send + Sync {
         signatures: &[Signature],
     ) -> Result<Vec<Option<ConfirmedTransactionWithStatusMeta>>>;
 
-    fn get_signatures_forward(
+    async fn get_signatures_forward(
         &self,
         address: &Pubkey,
         before_signature: Option<&Signature>,
@@ -504,7 +504,7 @@ pub trait LedgerStorageAdapter: Send + Sync {
         until_slot: Option<Slot>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>>;
 
-    fn get_signatures_backward(
+    async fn get_signatures_backward(
         &self,
         address: &Pubkey,
         before_signature: Option<&Signature>,

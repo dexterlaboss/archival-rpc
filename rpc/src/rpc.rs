@@ -7,6 +7,11 @@ use {
             verify_pubkey,
             verify_and_parse_signatures_for_address_params,
             MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT,
+            TransactionDetailsMode,
+            TransactionStatusFilter,
+            GetTransactionsForAddressResponse,
+            SortOrder,
+            RpcTransactionFilters,
         },
         deprecated::*,
     },
@@ -57,7 +62,11 @@ pub struct RpcTransactionsForAddressConfig {
     pub before: Option<String>,
     pub until: Option<String>,
     pub limit: Option<usize>,
-    pub reversed: Option<bool>,
+    pub sort_order: Option<SortOrder>,
+    pub transaction_details: Option<TransactionDetailsMode>,
+    pub filter_by_status: Option<TransactionStatusFilter>,
+    pub filters: Option<RpcTransactionFilters>,
+    pub pagination_token: Option<String>,
     pub encoding: Option<solana_transaction_status_client_types::UiTransactionEncoding>,
     pub max_supported_transaction_version: Option<u8>,
     #[serde(flatten)]
@@ -215,7 +224,7 @@ pub mod storage_rpc_full {
             meta: Self::Metadata,
             address: String,
             config: Option<RpcTransactionsForAddressConfig>,
-        ) -> BoxFuture<Result<Vec<EncodedConfirmedTransactionWithStatusMeta>>>;
+        ) -> BoxFuture<Result<GetTransactionsForAddressResponse>>;
 
         #[rpc(meta, name = "getFirstAvailableBlock")]
         fn get_first_available_block(&self, meta: Self::Metadata) -> BoxFuture<Result<Slot>>;
@@ -383,24 +392,35 @@ pub mod storage_rpc_full {
             meta: Self::Metadata,
             address: String,
             config: Option<RpcTransactionsForAddressConfig>,
-        ) -> BoxFuture<Result<Vec<EncodedConfirmedTransactionWithStatusMeta>>> {
+        ) -> BoxFuture<Result<GetTransactionsForAddressResponse>> {
             let RpcTransactionsForAddressConfig {
                 before,
                 until,
                 limit,
-                reversed,
+                sort_order,
+                transaction_details,
+                filter_by_status,
+                filters,
+                pagination_token,
                 encoding,
                 max_supported_transaction_version,
                 commitment,
                 min_context_slot,
             } = config.unwrap_or_default();
-            // Cap at MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT (lower than the signatures limit
-            // since full tx blobs are much larger)
+
+            // pagination_token overrides before (it's the last sig from the previous page)
+            let before = pagination_token.or(before);
+
+            // Cap at MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT
             let limit = Some(
                 limit
                     .unwrap_or(MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT)
                     .min(MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT),
             );
+
+            let details_mode = transaction_details.unwrap_or_default();
+            let status_filter = filter_by_status.unwrap_or_default();
+
             let verification =
                 verify_and_parse_signatures_for_address_params(address, before, until, limit);
 
@@ -412,13 +432,16 @@ pub mod storage_rpc_full {
                         before,
                         until,
                         limit,
-                        reversed,
+                        sort_order,
+                        details_mode,
+                        status_filter,
                         encoding,
                         max_supported_transaction_version,
                         RpcContextConfig {
                             commitment,
                             min_context_slot,
                         },
+                        filters,
                     )
                     .await
                 }),

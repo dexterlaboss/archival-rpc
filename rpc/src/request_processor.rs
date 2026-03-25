@@ -4,6 +4,7 @@ use {
     crate::{
         custom_error::RpcCustomError,
     },
+    serde_json,
     jsonrpc_core::{
         Error, Metadata, Result
     },
@@ -79,6 +80,65 @@ pub const MAX_GENESIS_ARCHIVE_UNPACKED_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 
 pub const MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT: usize = 10_000;
 pub const MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT: usize = 1_000;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum TransactionDetailsMode {
+    #[default]
+    Full,
+    Signatures,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum TransactionStatusFilter {
+    #[default]
+    Any,
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SortOrder {
+    #[default]
+    Desc,
+    Asc,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcBlockTimeRange {
+    pub before: Option<i64>,
+    pub after: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcTransactionFilters {
+    pub status: Option<TransactionStatusFilter>,
+    pub block_time: Option<RpcBlockTimeRange>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTransactionsForAddressResponse {
+    pub data: Vec<serde_json::Value>,
+    pub pagination_token: Option<String>,
+}
+
+/// Approximate conversion from Unix timestamp to Solana slot.
+/// Uses mainnet genesis time and ~400ms/slot average.
+pub fn block_time_to_slot(block_time: i64) -> Slot {
+    const GENESIS_UNIX_TIMESTAMP: i64 = 1584368940;
+    const SLOTS_PER_SECOND: f64 = 2.149; // ~400ms/slot average
+    let elapsed = block_time.saturating_sub(GENESIS_UNIX_TIMESTAMP);
+    if elapsed <= 0 {
+        0
+    } else {
+        (elapsed as f64 * SLOTS_PER_SECOND) as Slot
+    }
+}
 
 type Rewards = Vec<Reward>;
 
@@ -690,6 +750,8 @@ impl JsonRpcRequestProcessor {
                         until.as_ref(),
                         limit,
                         reversed,
+                        None,
+                        None,
                     )
                     .await;
                 match hbase_results {
@@ -724,17 +786,39 @@ impl JsonRpcRequestProcessor {
         before: Option<Signature>,
         until: Option<Signature>,
         limit: usize,
-        reversed: Option<bool>,
+        sort_order: Option<SortOrder>,
+        details_mode: TransactionDetailsMode,
+        status_filter: TransactionStatusFilter,
         encoding: Option<UiTransactionEncoding>,
         max_supported_transaction_version: Option<u8>,
         config: RpcContextConfig,
-    ) -> Result<Vec<EncodedConfirmedTransactionWithStatusMeta>> {
+        filters: Option<RpcTransactionFilters>,
+    ) -> Result<GetTransactionsForAddressResponse> {
         let commitment = config.commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
 
+        // Derive `reversed` from sort_order (Asc = oldest first = forward scan)
+        let reversed = sort_order.as_ref().map(|o| matches!(o, SortOrder::Asc));
+
+        // Extract slot bounds from blockTime range filter
+        let (before_slot, until_slot) = if let Some(ref f) = filters {
+            let bt = f.block_time.as_ref();
+            let bslot = bt.and_then(|b| b.before).map(block_time_to_slot);
+            let uslot = bt.and_then(|b| b.after).map(block_time_to_slot);
+            (bslot, uslot)
+        } else {
+            (None, None)
+        };
+
+        // Merge status filter: filters.status overrides top-level status_filter
+        let status_filter = filters
+            .as_ref()
+            .and_then(|f| f.status.clone())
+            .unwrap_or(status_filter);
+
         info!(
-            "getTransactionsForAddress request received [address: {:?}, before: {:?}, until: {:?}, limit: {:?}]",
-            address, before, until, limit
+            "getTransactionsForAddress request received [address: {:?}, before: {:?}, until: {:?}, limit: {:?}, details: {:?}, sort: {:?}, before_slot: {:?}, until_slot: {:?}]",
+            address, before, until, limit, details_mode, sort_order, before_slot, until_slot
         );
 
         if !self.config.enable_rpc_transaction_history {
@@ -742,10 +826,12 @@ impl JsonRpcRequestProcessor {
         }
 
         let encoding = encoding.unwrap_or(UiTransactionEncoding::Json);
+        // Default to supporting versioned (v0) transactions
+        let max_supported_transaction_version = max_supported_transaction_version.or(Some(0));
 
         // Step 1: range scan on tx-by-addr (one HBase call)
         let t0 = Instant::now();
-        let sig_results = if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
+        let mut sig_results = if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
             hbase_ledger_storage
                 .get_confirmed_signatures_for_address(
                     &address,
@@ -753,17 +839,43 @@ impl JsonRpcRequestProcessor {
                     until.as_ref(),
                     limit,
                     reversed,
+                    before_slot,
+                    until_slot,
                 )
                 .await
                 .unwrap_or_default()
         } else {
-            return Ok(vec![]);
+            return Ok(GetTransactionsForAddressResponse { data: vec![], pagination_token: None });
         };
         let sig_elapsed = t0.elapsed();
 
+        // Apply status filter
+        match status_filter {
+            TransactionStatusFilter::Succeeded => sig_results.retain(|(s, _)| s.err.is_none()),
+            TransactionStatusFilter::Failed    => sig_results.retain(|(s, _)| s.err.is_some()),
+            TransactionStatusFilter::Any       => {}
+        }
+
         if sig_results.is_empty() {
-            info!("getTransactionsForAddress: sig scan took {:?}, 0 results", sig_elapsed);
-            return Ok(vec![]);
+            info!("getTransactionsForAddress: sig scan took {:?}, 0 results after filter", sig_elapsed);
+            return Ok(GetTransactionsForAddressResponse { data: vec![], pagination_token: None });
+        }
+
+        let pagination_token = sig_results.last().map(|(s, _)| s.signature.to_string());
+
+        // Signatures-only mode: skip tx fetch, return lightweight sig metadata
+        if details_mode == TransactionDetailsMode::Signatures {
+            info!("getTransactionsForAddress: sig scan {:?} ({} sigs, signatures mode), total {:?}",
+                sig_elapsed, sig_results.len(), t0.elapsed());
+            let data = sig_results
+                .into_iter()
+                .map(|(s, _)| {
+                    let mut item: RpcConfirmedTransactionStatusWithSignature = s.into();
+                    item.confirmation_status = Some(TransactionConfirmationStatus::Finalized);
+                    serde_json::to_value(item).unwrap_or(serde_json::Value::Null)
+                })
+                .collect();
+            return Ok(GetTransactionsForAddressResponse { data, pagination_token });
         }
 
         let signatures: Vec<Signature> = sig_results.iter().map(|(s, _)| s.signature).collect();
@@ -772,16 +884,14 @@ impl JsonRpcRequestProcessor {
         let t1 = Instant::now();
         let tx_results: Vec<Option<ConfirmedTransactionWithStatusMeta>> =
             if let Some(tx_storage) = &self.tx_ledger_storage {
-                // Dedicated tx HBase: single batch multi-get on tx_full
                 tx_storage
                     .get_confirmed_transactions_batch(&signatures)
                     .await
                     .unwrap_or_else(|e| {
-                        warn!("Batch tx fetch failed, results will be empty: {:?}", e);
+                        warn!("Batch tx fetch failed: {:?}", e);
                         vec![None; signatures.len()]
                     })
             } else {
-                // Fallback: parallel individual lookups across primary + fallback storage
                 let primary = self.hbase_ledger_storage.as_ref();
                 let fallback = self.fallback_ledger_storage.as_ref();
                 let fetch_futures: Vec<_> = signatures
@@ -809,24 +919,22 @@ impl JsonRpcRequestProcessor {
 
         info!(
             "getTransactionsForAddress: sig scan {:?} ({} sigs), tx fetch {:?} ({} txs), total {:?}",
-            sig_elapsed,
-            sig_results.len(),
-            tx_elapsed,
+            sig_elapsed, sig_results.len(), tx_elapsed,
             tx_results.iter().filter(|t| t.is_some()).count(),
             t0.elapsed(),
         );
 
-        let mut encoded = Vec::with_capacity(tx_results.len());
+        let mut data = Vec::with_capacity(tx_results.len());
         for tx_opt in tx_results {
             if let Some(tx) = tx_opt {
                 match tx.encode(encoding, max_supported_transaction_version).map_err(RpcCustomError::from) {
-                    Ok(encoded_tx) => encoded.push(encoded_tx),
+                    Ok(encoded_tx) => data.push(serde_json::to_value(encoded_tx).unwrap_or(serde_json::Value::Null)),
                     Err(e) => return Err(e.into()),
                 }
             }
         }
 
-        Ok(encoded)
+        Ok(GetTransactionsForAddressResponse { data, pagination_token })
     }
 
     pub async fn get_first_available_block(&self) -> Slot {

@@ -220,7 +220,7 @@ impl<'a> HBase<'a> {
     /// If `end_at` is provided, the row key listing will end at the key. Otherwise it will
     /// continue until the `rows_limit` is reached or the end of the table, whichever comes first.
     /// If `rows_limit` is zero, this method will return an empty array.
-    pub async fn get_row_keys(
+    pub fn get_row_keys(
         &mut self,
         table_name: &str,
         start_at: Option<RowKey>,
@@ -299,7 +299,7 @@ impl<'a> HBase<'a> {
     /// If `end_at` is provided, the row key listing will end at the key. Otherwise it will
     /// continue until the `rows_limit` is reached or the end of the table, whichever comes first.
     /// If `rows_limit` is zero, this method will return an empty array.
-    pub async fn get_row_data(
+    pub fn get_row_data(
         &mut self,
         table_name: &str,
         start_at: Option<RowKey>,
@@ -381,7 +381,7 @@ impl<'a> HBase<'a> {
         Ok(results)
     }
 
-    pub async fn get_single_row_data(
+    pub fn get_single_row_data(
         &mut self,
         table_name: &str,
         row_key: RowKey,
@@ -413,7 +413,7 @@ impl<'a> HBase<'a> {
         Ok(result_value)
     }
 
-    pub async fn get_rows_data(
+    pub fn get_rows_data(
         &mut self,
         table_name: &str,
         row_keys: &[RowKey],
@@ -457,15 +457,15 @@ impl<'a> HBase<'a> {
         Ok(results)
     }
 
-    pub async fn get_bincode_cell<T>(&mut self, table: &str, key: RowKey) -> Result<T>
+    pub fn get_bincode_cell<T>(&mut self, table: &str, key: RowKey) -> Result<T>
         where
             T: serde::de::DeserializeOwned,
     {
-        let row_data = self.get_single_row_data(table, key.clone()).await?;
+        let row_data = self.get_single_row_data(table, key.clone())?;
         deserialize_bincode_cell_data(&row_data, table, key.to_string())
     }
 
-    pub async fn get_bincode_cells<T>(
+    pub fn get_bincode_cells<T>(
         &mut self,
         table: &str,
         keys: Vec<RowKey>,
@@ -473,7 +473,7 @@ impl<'a> HBase<'a> {
     where
         T: serde::de::DeserializeOwned,
     {
-        let rows_data = self.get_rows_data(table, &keys).await?;
+        let rows_data = self.get_rows_data(table, &keys)?;
 
         Ok(rows_data
             .into_iter()
@@ -485,7 +485,7 @@ impl<'a> HBase<'a> {
             .collect())
     }
 
-    pub async fn get_protobuf_or_bincode_cell<B, P>(
+    pub fn get_protobuf_or_bincode_cell<B, P>(
         &mut self,
         table: &str,
         key: RowKey,
@@ -494,11 +494,11 @@ impl<'a> HBase<'a> {
             B: serde::de::DeserializeOwned,
             P: prost::Message + Default,
     {
-        let row_data = self.get_single_row_data(table, key.clone()).await?;
+        let row_data = self.get_single_row_data(table, key.clone())?;
         deserialize_protobuf_or_bincode_cell_data(&row_data, table, key)
     }
 
-    pub async fn get_protobuf_or_bincode_cell_serialized<B, P>(
+    pub fn get_protobuf_or_bincode_cell_serialized<B, P>(
         &mut self,
         table: &str,
         key: RowKey,
@@ -507,7 +507,7 @@ impl<'a> HBase<'a> {
             B: serde::de::DeserializeOwned,
             P: prost::Message + Default,
     {
-        self.get_single_row_data(table, key.clone()).await
+        self.get_single_row_data(table, key.clone())
     }
 
     pub async fn put_bincode_cells<T>(
@@ -575,8 +575,8 @@ impl<'a> HBase<'a> {
         Ok(())
     }
 
-    pub async fn get_last_row_key(&mut self, table_name: &str) -> Result<String> {
-        let row_keys = self.get_row_keys(table_name, None, None, 1, true).await?;
+    pub fn get_last_row_key(&mut self, table_name: &str) -> Result<String> {
+        let row_keys = self.get_row_keys(table_name, None, None, 1, true)?;
         if let Some(last_row_key) = row_keys.first() {
             Ok(last_row_key.clone())
         } else {

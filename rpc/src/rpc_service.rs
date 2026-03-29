@@ -64,10 +64,12 @@ impl JsonRpcService {
         info!("rpc configuration: {:?}", config);
         let rpc_threads = 1.max(config.rpc_threads);
         let rpc_niceness_adj = config.rpc_niceness_adj;
+        let rpc_blocking_threads = config.rpc_blocking_threads;
 
         let runtime = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(rpc_threads)
+                .max_blocking_threads(rpc_blocking_threads)
                 .on_thread_start(
                     move || {
                         renice_this_thread(rpc_niceness_adj).unwrap();
@@ -123,7 +125,7 @@ impl JsonRpcService {
                     webhdfs_url: webhdfs_url.clone(),
                 };
                 runtime
-                    .block_on(solana_storage_hbase::LedgerStorage::new_with_config(hbase_config, metrics.clone()))
+                    .block_on(solana_storage_hbase::LedgerStorage::new_with_config(hbase_config, metrics.clone(), runtime.clone()))
                     .map(|hbase_ledger_storage| {
                         info!("HBase ledger storage initialized");
                         Some(Box::new(hbase_ledger_storage) as Box<dyn LedgerStorageAdapter>)
@@ -179,7 +181,7 @@ impl JsonRpcService {
                         webhdfs_url: webhdfs_url.clone(),
                     };
                     runtime
-                        .block_on(solana_storage_hbase::LedgerStorage::new_with_config(fallback_config, metrics.clone()))
+                        .block_on(solana_storage_hbase::LedgerStorage::new_with_config(fallback_config, metrics.clone(), runtime.clone()))
                         .map(|fallback_ledger_storage| {
                             info!("Fallback ledger storage initialized");
                             Some(Box::new(fallback_ledger_storage) as Box<dyn LedgerStorageAdapter>)
@@ -201,6 +203,7 @@ impl JsonRpcService {
             .unwrap_or(MAX_REQUEST_BODY_SIZE);
         // let (request_processor, _receiver) = JsonRpcRequestProcessor::new(
         let request_processor = JsonRpcRequestProcessor::new(
+            runtime.clone(),
             config,
             rpc_service_exit.clone(),
             hbase_ledger_storage,

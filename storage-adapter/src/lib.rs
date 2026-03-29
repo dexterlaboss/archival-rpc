@@ -476,7 +476,7 @@ pub trait LedgerStorageAdapter: Send + Sync {
         reversed: Option<bool>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>>;
 
-    async fn get_signatures_forward(
+    fn get_signatures_forward(
         &self,
         address: &Pubkey,
         before_signature: Option<&Signature>,
@@ -484,7 +484,7 @@ pub trait LedgerStorageAdapter: Send + Sync {
         limit: usize,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>>;
 
-    async fn get_signatures_backward(
+    fn get_signatures_backward(
         &self,
         address: &Pubkey,
         before_signature: Option<&Signature>,

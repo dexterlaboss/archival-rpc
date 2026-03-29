@@ -246,7 +246,7 @@ pub mod storage_rpc_full {
             slot: Slot,
             config: Option<RpcEncodingConfigWrapper<RpcBlockConfig>>,
         ) -> BoxFuture<Result<Option<UiConfirmedBlock>>> {
-            info!("getBlock request received: {:?}", slot);
+            debug!("getBlock request received: {:?}", slot);
             Box::pin(async move { meta.get_block(slot, config).await })
         }
 

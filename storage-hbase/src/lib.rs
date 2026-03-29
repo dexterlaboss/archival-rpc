@@ -274,7 +274,6 @@ pub struct LedgerStorage {
     runtime: Arc<Runtime>,
     connection: hbase::HBaseConnection,
     connection_pool: HbaseConnectionPool,
-    fallback_connection: Option<hbase::HBaseConnection>,
     fallback_connection_pool: Option<HbaseConnectionPool>,
     namespace: Option<String>,
     hdfs_client: Option<Arc<Client>>,
@@ -432,7 +431,6 @@ impl LedgerStorage {
             connection,
             connection_pool,
             fallback_connection_pool,
-            fallback_connection,
             namespace,
             hdfs_client,
             hdfs_path,
@@ -480,8 +478,9 @@ impl LedgerStorage {
 
     /// Get block metadata from blocks_meta table for a specific slot
     async fn get_block_metadata(&self, slot: Slot) -> Result<StoredCarIndexEntry> {
-        let mut hbase = self.connection.client();
-        
+        let mut hbase_conn = self.connection_pool.get().unwrap();
+        let mut hbase = HBase::new_borrowed(&mut *hbase_conn, self.namespace.clone());
+
         let index_cell_data = hbase
             .get_protobuf_or_bincode_cell::<StoredCarIndexEntry, car_index::CarIndexEntry>(
                 "blocks_meta",
@@ -536,9 +535,11 @@ impl LedgerStorageAdapter for LedgerStorage {
     async fn get_first_available_block(&self) -> Result<Option<Slot>> {
         debug!("LedgerStorage::get_first_available_block request received");
 
+        let mut hbase_conn = self.connection_pool.get().unwrap();
+        let mut hbase = HBase::new_borrowed(&mut *hbase_conn, self.namespace.clone());
+
         // Check if we should use blocks_meta table
         if self.use_hbase_blocks_meta {
-            let mut hbase = self.connection.client();
             // blocks_meta table does not use MD5 salt for its row keys
             let row_keys = hbase
                 .get_row_keys("blocks_meta", None, None, 1, false)?;
@@ -553,7 +554,6 @@ impl LedgerStorageAdapter for LedgerStorage {
         }
 
         // inc_new_counter_debug!("storage-hbase-query", 1);
-        let mut hbase = self.connection.client();
         let blocks = hbase.get_row_keys("blocks", None, None, 1, false)?;
         if blocks.is_empty() {
             return Ok(None);
@@ -571,9 +571,11 @@ impl LedgerStorageAdapter for LedgerStorage {
             start_slot, limit
         );
 
+        let mut hbase_conn = self.connection_pool.get().unwrap();
+        let mut hbase = HBase::new_borrowed(&mut *hbase_conn, self.namespace.clone());
+
         // Check if we should use blocks_meta table
         if self.use_hbase_blocks_meta {
-            let mut hbase = self.connection.client();
             // blocks_meta table does not use MD5 salt for its row keys
             let start_key = slot_to_blocks_key(start_slot, false);
             let row_keys = hbase
@@ -596,7 +598,6 @@ impl LedgerStorageAdapter for LedgerStorage {
         }
 
         // inc_new_counter_debug!("storage-hbase-query", 1);
-        let mut hbase = self.connection.client();
         let blocks = hbase
             .get_row_keys(
                 "blocks",
@@ -830,7 +831,8 @@ impl LedgerStorageAdapter for LedgerStorage {
         // inc_new_counter_debug!("storage-hbase-query", 1);
 
         let start = Instant::now();
-        let mut hbase = self.connection.client();
+        let mut hbase_conn = self.connection_pool.get().unwrap();
+        let mut hbase = HBase::new_borrowed(&mut *hbase_conn, self.namespace.clone());
         let duration: Duration = start.elapsed();
         debug!("HBase connection took {:?}", duration);
 
@@ -923,7 +925,8 @@ impl LedgerStorageAdapter for LedgerStorage {
             signature
         );
         // inc_new_counter_debug!("storage-hbase-query", 1);
-        let mut hbase = self.connection.client();
+        let mut hbase_conn = self.connection_pool.get().unwrap();
+        let mut hbase = HBase::new_borrowed(&mut *hbase_conn, self.namespace.clone());
         let transaction_info = hbase
             .get_bincode_cell::<TransactionInfo>("tx", signature.to_string())
             .map_err(|err| match err {
@@ -1025,7 +1028,6 @@ impl LedgerStorageAdapter for LedgerStorage {
             "LedgerStorage::get_confirmed_transaction request received: {:?}",
             signature
         );
-        debug!("LedgerStorage::get_confirmed_transaction using address: {:?}", self.connection);
 
         let mut source = "tx";
         let tx_type;
@@ -1190,8 +1192,9 @@ impl LedgerStorageAdapter for LedgerStorage {
                 match hbase.get_bincode_cell("tx", until_signature.to_string()) {
                     Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
                     Err(hbase::Error::RowNotFound) => {
-                        if let Some(fallback_connection) = &self.fallback_connection {
-                            let mut hbase = fallback_connection.client();
+                        if let Some(connection_pool) = &self.fallback_connection_pool {
+                            let mut hbase_conn = connection_pool.get().unwrap();
+                            let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace.clone());
                             match hbase.get_bincode_cell("tx", until_signature.to_string()) {
                                 Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
                                 Err(hbase::Error::RowNotFound) => return Ok(vec![]),
@@ -1212,8 +1215,9 @@ impl LedgerStorageAdapter for LedgerStorage {
                 match hbase.get_bincode_cell("tx", before_signature.to_string()) {
                     Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
                     Err(hbase::Error::RowNotFound) => {
-                        if let Some(fallback_connection) = &self.fallback_connection {
-                            let mut hbase = fallback_connection.client();
+                        if let Some(connection_pool) = &self.fallback_connection_pool {
+                            let mut hbase_conn = connection_pool.get().unwrap();
+                            let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace.clone());
                             match hbase.get_bincode_cell("tx", before_signature.to_string()) {
                                 Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
                                 Err(hbase::Error::RowNotFound) => return Ok(vec![]),
@@ -1547,8 +1551,10 @@ impl LedgerStorageAdapter for LedgerStorage {
 
     async fn get_latest_stored_slot(&self) -> Result<Slot> {
         // Check if we should use blocks_meta table
+        let mut hbase_conn = self.connection_pool.get().unwrap();
+        let mut hbase = HBase::new_borrowed(&mut *hbase_conn, self.namespace.clone());
+
         if self.use_hbase_blocks_meta {
-            let mut hbase = self.connection.client();
             // blocks_meta table does not use MD5 salt for its row keys
             match hbase.get_last_row_key("blocks_meta") {
                 Ok(last_row_key) => {
@@ -1566,7 +1572,6 @@ impl LedgerStorageAdapter for LedgerStorage {
         }
 
         // inc_new_counter_debug!("storage-hbase-query", 1);
-        let mut hbase = self.connection.client();
         match hbase.get_last_row_key("blocks") {
             Ok(last_row_key) => {
                 match key_to_slot(&last_row_key) {

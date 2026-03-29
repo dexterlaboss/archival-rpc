@@ -196,6 +196,7 @@ fn main() {
         // full_api,
         obsolete_v1_7_api: matches.is_present("obsolete_v1_7_rpc_api"),
         rpc_threads: value_t_or_exit!(matches, "rpc_threads", usize),
+        rpc_blocking_threads: value_t_or_exit!(matches, "rpc_blocking_threads", usize),
         rpc_niceness_adj: value_t_or_exit!(matches, "rpc_niceness_adj", i8),
         max_request_body_size: Some(value_t_or_exit!(
                 matches,

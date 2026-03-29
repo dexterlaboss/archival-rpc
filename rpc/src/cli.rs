@@ -297,6 +297,15 @@ pub fn storage_rpc_service<'a>(version: &'a str, default_args: &'a DefaultStorag
                 .help("Number of threads to use for servicing RPC requests"),
         )
         .arg(
+            Arg::with_name("rpc_blocking_threads")
+                .long("rpc-blocking-threads")
+                .value_name("NUMBER")
+                .validator(is_parsable::<usize>)
+                .takes_value(true)
+                .default_value(&default_args.rpc_threads)
+                .help("Number of threads to use for servicing blocking RPC requests"),
+        )
+        .arg(
             Arg::with_name("rpc_niceness_adj")
                 .long("rpc-niceness-adjustment")
                 .value_name("ADJUSTMENT")

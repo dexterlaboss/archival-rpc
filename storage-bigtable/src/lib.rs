@@ -501,7 +501,10 @@ impl LedgerStorageAdapter for LedgerStorage {
     }
 
     async fn get_signatures_status(&self, _signatures: &Vec<Signature>) -> Result<Vec<Result<TransactionStatus>>> {
-        unimplemented!("LedgerStorage::get_signatures_status is not implemented yet");
+        Err(Error::StorageBackendError(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Method not supported",
+        ))))
     }
 
     async fn get_full_transaction(
@@ -700,7 +703,7 @@ impl LedgerStorageAdapter for LedgerStorage {
         Ok(infos)
     }
 
-    async fn get_signatures_forward(
+    fn get_signatures_forward(
         &self,
         _address: &Pubkey,
         _before_signature: Option<&Signature>,
@@ -713,7 +716,7 @@ impl LedgerStorageAdapter for LedgerStorage {
         ))))
     }
 
-    async fn get_signatures_backward(
+    fn get_signatures_backward(
         &self,
         _address: &Pubkey,
         _before_signature: Option<&Signature>,

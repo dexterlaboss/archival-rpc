@@ -4,6 +4,7 @@ use {
     crate::{
         custom_error::RpcCustomError,
     },
+    futures::future::OptionFuture,
     jsonrpc_core::{
         Error, Metadata, Result
     },
@@ -72,6 +73,7 @@ use {
         },
         time::{Duration, Instant},
     },
+    tokio::runtime::Runtime,
 };
 
 pub const MAX_REQUEST_BODY_SIZE: usize = 50 * (1 << 10); // 50kB
@@ -145,6 +147,7 @@ pub struct JsonRpcConfig {
     pub rpc_hbase_config: Option<RpcHBaseConfig>,
     pub rpc_node_config: UpstreamRpcConfig,
     pub rpc_threads: usize,
+    pub rpc_blocking_threads: usize,
     pub rpc_niceness_adj: i8,
     pub full_api: bool,
     pub obsolete_v1_7_api: bool,
@@ -219,6 +222,7 @@ impl Default for RpcHBaseConfig {
 
 // #[derive(Clone)]
 pub struct JsonRpcRequestProcessor {
+    runtime: Arc<Runtime>,
     config: JsonRpcConfig,
     #[allow(dead_code)]
     rpc_service_exit: Arc<RwLock<Exit>>,
@@ -233,6 +237,7 @@ impl Metadata for JsonRpcRequestProcessor {}
 impl Clone for JsonRpcRequestProcessor {
     fn clone(&self) -> Self {
         JsonRpcRequestProcessor {
+            runtime: self.runtime.clone(),
             config: self.config.clone(),
             rpc_service_exit: Arc::clone(&self.rpc_service_exit),
             hbase_ledger_storage: self.hbase_ledger_storage.as_ref().map(|storage| storage.clone_box()),
@@ -251,6 +256,7 @@ impl JsonRpcRequestProcessor {
 
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        runtime: Arc<Runtime>,
         config: JsonRpcConfig,
         rpc_service_exit: Arc<RwLock<Exit>>,
         hbase_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
@@ -283,6 +289,7 @@ impl JsonRpcRequestProcessor {
         });
 
         Self {
+            runtime,
             config,
             rpc_service_exit,
             hbase_ledger_storage,
@@ -334,29 +341,34 @@ impl JsonRpcRequestProcessor {
             let commitment = config.commitment.unwrap_or_default();
             check_is_at_least_confirmed(commitment)?;
 
-            let encode_block = |confirmed_block: ConfirmedBlock| -> Result<UiConfirmedBlock> {
+            let encode_block = |confirmed_block: ConfirmedBlock| async move {
                 debug!("Encoding block");
-                let mut encoded_block = confirmed_block
+                let mut encoded_block = self.runtime.spawn_blocking(move || {
+                confirmed_block
                     .encode_with_options(encoding, encoding_options)
                     .map_err(|e| {
                         debug!("Encoding error: {:?}", e);
                         RpcCustomError::from(e)
-                    })?;
+                    })
+                })
+                .await
+                .expect("Failed to spawn blocking task")?;
                 if slot == 0 {
                     encoded_block.block_time = Some(self.genesis_creation_time());
                     encoded_block.block_height = Some(0);
                 }
                 debug!("Encoded block");
 
-                Ok(encoded_block)
+                Ok::<UiConfirmedBlock, Error>(encoded_block)
             };
             if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
                 let hbase_result = hbase_ledger_storage.get_confirmed_block(slot, false).await;
                 debug!("Got confirmed block");
 
                 self.check_hbase_result(&hbase_result)?;
-
-                return hbase_result.ok().map(encode_block).transpose();
+                let encoded_block_future: OptionFuture<_> =
+                    hbase_result.ok().map(encode_block).into();
+                return encoded_block_future.await.transpose();
             }
         } else {
             return Err(RpcCustomError::TransactionHistoryNotAvailable.into());

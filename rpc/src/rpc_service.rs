@@ -234,9 +234,10 @@ impl JsonRpcService {
                         use_hbase_blocks_meta,
                         use_webhdfs,
                         webhdfs_url: webhdfs_url.clone(),
+                        thrift_connection_pool_size: 100,
                     };
                     runtime
-                        .block_on(solana_storage_hbase::LedgerStorage::new_with_config(tx_config, metrics.clone()))
+                        .block_on(solana_storage_hbase::LedgerStorage::new_with_config(tx_config, metrics.clone(), runtime.clone()))
                         .map(|storage| {
                             info!("TX ledger storage initialized (hbase_address_tx)");
                             Some(Box::new(storage) as Box<dyn LedgerStorageAdapter>)

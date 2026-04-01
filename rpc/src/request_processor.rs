@@ -5,6 +5,7 @@ use {
         custom_error::RpcCustomError,
     },
     futures::future::OptionFuture,
+    serde_json,
     jsonrpc_core::{
         Error, Metadata, Result
     },
@@ -39,6 +40,7 @@ use {
         ConfirmedBlock,
         ConfirmedTransactionStatusWithSignature,
         ConfirmedTransactionWithStatusMeta,
+        TransactionWithStatusMeta,
     },
     solana_transaction_status_client_types::{
         EncodedConfirmedTransactionWithStatusMeta,
@@ -80,6 +82,107 @@ pub const MAX_REQUEST_BODY_SIZE: usize = 50 * (1 << 10); // 50kB
 pub const MAX_GENESIS_ARCHIVE_UNPACKED_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 
 pub const MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT: usize = 10_000;
+pub const MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT: usize = 1_000;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum TransactionDetailsMode {
+    Full,
+    #[default]
+    Signatures,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum TransactionStatusFilter {
+    #[default]
+    Any,
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SortOrder {
+    #[default]
+    Desc,
+    Asc,
+}
+
+/// Comparison-operator range for blockTime (Unix timestamps).
+/// Matches Helius filter format: filters.blockTime.gte / .gt / .lte / .lt
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RpcBlockTimeRange {
+    pub gte: Option<i64>,
+    pub gt: Option<i64>,
+    pub lte: Option<i64>,
+    pub lt: Option<i64>,
+}
+
+/// Comparison-operator range for slot numbers.
+/// Matches Helius filter format: filters.slot.gte / .gt / .lte / .lt
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RpcSlotRange {
+    pub gte: Option<Slot>,
+    pub gt: Option<Slot>,
+    pub lte: Option<Slot>,
+    pub lt: Option<Slot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum TokenAccountsFilter {
+    /// No token account filtering (include everything) — default
+    #[default]
+    None,
+    /// Only transactions where at least one token balance changed
+    BalanceChanged,
+    /// All transactions that involve any token account
+    All,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcTransactionFilters {
+    pub status: Option<TransactionStatusFilter>,
+    pub block_time: Option<RpcBlockTimeRange>,
+    pub slot: Option<RpcSlotRange>,
+    pub token_accounts: Option<TokenAccountsFilter>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTransactionsForAddressResponse {
+    pub data: Vec<serde_json::Value>,
+    pub pagination_token: Option<String>,
+}
+
+
+/// Returns true if the transaction has any token account involvement.
+fn tx_has_token_accounts(tx: &ConfirmedTransactionWithStatusMeta) -> bool {
+    if let TransactionWithStatusMeta::Complete(ref vtx) = tx.tx_with_meta {
+        vtx.meta.pre_token_balances.as_ref().map_or(false, |v| !v.is_empty())
+            || vtx.meta.post_token_balances.as_ref().map_or(false, |v| !v.is_empty())
+    } else {
+        false
+    }
+}
+
+/// Returns true if at least one token balance changed between pre and post.
+fn tx_has_token_balance_changed(tx: &ConfirmedTransactionWithStatusMeta) -> bool {
+    if let TransactionWithStatusMeta::Complete(ref vtx) = tx.tx_with_meta {
+        let pre = vtx.meta.pre_token_balances.as_deref().unwrap_or(&[]);
+        let post = vtx.meta.post_token_balances.as_deref().unwrap_or(&[]);
+        if pre.len() != post.len() {
+            return true;
+        }
+        pre.iter().zip(post.iter()).any(|(p, q)| {
+            p.account_index != q.account_index || p.ui_token_amount.amount != q.ui_token_amount.amount
+        })
+    } else {
+        false
+    }
+}
 
 type Rewards = Vec<Reward>;
 
@@ -174,6 +277,7 @@ pub struct RpcHBaseConfig {
     pub hdfs_url: String,
     pub hdfs_path: String,
     pub fallback_hbase_address: Option<String>,
+    pub hbase_address_tx: Option<String>,
     pub timeout: Option<Duration>,
     // pub block_cache: Option<NonZeroUsize>,
     pub use_md5_row_key_salt: bool,
@@ -205,6 +309,7 @@ impl Default for RpcHBaseConfig {
             hdfs_url,
             hdfs_path,
             fallback_hbase_address: None,
+            hbase_address_tx: None,
             timeout: None,
             // block_cache: None,
             use_md5_row_key_salt: false,
@@ -228,6 +333,7 @@ pub struct JsonRpcRequestProcessor {
     rpc_service_exit: Arc<RwLock<Exit>>,
     hbase_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
     fallback_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
+    tx_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
     genesis_config: Option<GenesisConfig>,
     rpc_node_client: Option<Arc<RpcClient>>,
 }
@@ -242,6 +348,7 @@ impl Clone for JsonRpcRequestProcessor {
             rpc_service_exit: Arc::clone(&self.rpc_service_exit),
             hbase_ledger_storage: self.hbase_ledger_storage.as_ref().map(|storage| storage.clone_box()),
             fallback_ledger_storage: self.fallback_ledger_storage.as_ref().map(|storage| storage.clone_box()),
+            tx_ledger_storage: self.tx_ledger_storage.as_ref().map(|storage| storage.clone_box()),
             genesis_config: self.genesis_config.clone(),
             rpc_node_client: self.rpc_node_client.clone(),
         }
@@ -261,6 +368,7 @@ impl JsonRpcRequestProcessor {
         rpc_service_exit: Arc<RwLock<Exit>>,
         hbase_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
         fallback_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
+        tx_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
     ) -> Self {
     // ) -> (Self, Receiver<TransactionInfo>) {
     //     let (_sender, receiver) = unbounded();
@@ -294,6 +402,7 @@ impl JsonRpcRequestProcessor {
             rpc_service_exit,
             hbase_ledger_storage,
             fallback_ledger_storage,
+            tx_ledger_storage,
             genesis_config,
             rpc_node_client,
         }
@@ -706,6 +815,8 @@ impl JsonRpcRequestProcessor {
                         until.as_ref(),
                         limit,
                         reversed,
+                        None,
+                        None,
                     )
                     .await;
                 match hbase_results {
@@ -732,6 +843,216 @@ impl JsonRpcRequestProcessor {
         } else {
             Err(RpcCustomError::TransactionHistoryNotAvailable.into())
         }
+    }
+
+    pub async fn get_transactions_for_address(
+        &self,
+        address: Pubkey,
+        before: Option<Signature>,
+        until: Option<Signature>,
+        limit: usize,
+        sort_order: Option<SortOrder>,
+        details_mode: TransactionDetailsMode,
+        status_filter: TransactionStatusFilter,
+        encoding: Option<UiTransactionEncoding>,
+        max_supported_transaction_version: Option<u8>,
+        config: RpcContextConfig,
+        filters: Option<RpcTransactionFilters>,
+    ) -> Result<GetTransactionsForAddressResponse> {
+        let commitment = config.commitment.unwrap_or_default();
+        check_is_at_least_confirmed(commitment)?;
+
+        // Derive `reversed` from sort_order (Asc = oldest first = forward scan)
+        let reversed = sort_order.as_ref().map(|o| matches!(o, SortOrder::Asc));
+
+        // Extract slot bounds from explicit slot filters only.
+        // blockTime filtering is handled exactly via post-scan filter; no approximation needed.
+        let (before_slot, until_slot) = if let Some(ref f) = filters {
+            let before_slot = f.slot.as_ref().and_then(|s| {
+                s.lte.or_else(|| s.lt.map(|v| v.saturating_sub(1)))
+            });
+            let until_slot = f.slot.as_ref().and_then(|s| {
+                s.gte.or_else(|| s.gt.map(|v| v + 1))
+            });
+            (before_slot, until_slot)
+        } else {
+            (None, None)
+        };
+
+        // Merge status filter: filters.status overrides top-level status_filter
+        let status_filter = filters
+            .as_ref()
+            .and_then(|f| f.status.clone())
+            .unwrap_or(status_filter);
+
+        info!(
+            "getTransactionsForAddress request received [address: {:?}, before: {:?}, until: {:?}, limit: {:?}, details: {:?}, sort: {:?}, before_slot: {:?}, until_slot: {:?}]",
+            address, before, until, limit, details_mode, sort_order, before_slot, until_slot
+        );
+
+        if !self.config.enable_rpc_transaction_history {
+            return Err(RpcCustomError::TransactionHistoryNotAvailable.into());
+        }
+
+        let encoding = encoding.unwrap_or(UiTransactionEncoding::Json);
+        // Default to supporting versioned (v0) transactions
+        let max_supported_transaction_version = max_supported_transaction_version.or(Some(0));
+
+        // Step 1: range scan on tx-by-addr (one HBase call)
+        let t0 = Instant::now();
+        let mut sig_results = if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
+            hbase_ledger_storage
+                .get_confirmed_signatures_for_address(
+                    &address,
+                    before.as_ref(),
+                    until.as_ref(),
+                    limit,
+                    reversed,
+                    before_slot,
+                    until_slot,
+                )
+                .await
+                .unwrap_or_default()
+        } else {
+            return Ok(GetTransactionsForAddressResponse { data: vec![], pagination_token: None });
+        };
+        let sig_elapsed = t0.elapsed();
+
+        // Apply status filter
+        match status_filter {
+            TransactionStatusFilter::Succeeded => sig_results.retain(|(s, _)| s.err.is_none()),
+            TransactionStatusFilter::Failed    => sig_results.retain(|(s, _)| s.err.is_some()),
+            TransactionStatusFilter::Any       => {}
+        }
+
+        // Exact block_time post-filter using the block_time stored in each tx-by-addr row.
+        // May return fewer than limit (same behavior as status/tokenAccounts filters).
+        if let Some(Some(ref bt)) = filters.as_ref().map(|f| f.block_time.as_ref()) {
+            sig_results.retain(|(s, _)| {
+                let Some(block_time) = s.block_time else { return true };
+                bt.gte.map_or(true, |t| block_time >= t)
+                    && bt.gt.map_or(true, |t| block_time > t)
+                    && bt.lte.map_or(true, |t| block_time <= t)
+                    && bt.lt.map_or(true, |t| block_time < t)
+            });
+        }
+
+        if sig_results.is_empty() {
+            info!("getTransactionsForAddress: sig scan took {:?}, 0 results after filter", sig_elapsed);
+            return Ok(GetTransactionsForAddressResponse { data: vec![], pagination_token: None });
+        }
+
+        // Token account filtering requires full tx data even in signatures mode
+        let token_filter = filters.as_ref().and_then(|f| f.token_accounts.as_ref());
+        let needs_full_for_token_filter = matches!(
+            token_filter,
+            Some(TokenAccountsFilter::All) | Some(TokenAccountsFilter::BalanceChanged)
+        );
+
+        // Signatures-only mode: skip tx fetch unless token filter needs full data
+        if details_mode == TransactionDetailsMode::Signatures && !needs_full_for_token_filter {
+            let pagination_token = sig_results.last().map(|(s, _)| s.signature.to_string());
+            info!("getTransactionsForAddress: sig scan {:?} ({} sigs, signatures mode), total {:?}",
+                sig_elapsed, sig_results.len(), t0.elapsed());
+            let data = sig_results
+                .into_iter()
+                .map(|(s, _)| {
+                    let mut item: RpcConfirmedTransactionStatusWithSignature = s.into();
+                    item.confirmation_status = Some(TransactionConfirmationStatus::Finalized);
+                    serde_json::to_value(item).unwrap_or(serde_json::Value::Null)
+                })
+                .collect();
+            return Ok(GetTransactionsForAddressResponse { data, pagination_token });
+        }
+
+        let signatures: Vec<Signature> = sig_results.iter().map(|(s, _)| s.signature).collect();
+
+        // Step 2: batch-fetch full transactions (single HBase getRows call)
+        let t1 = Instant::now();
+        let tx_results: Vec<Option<ConfirmedTransactionWithStatusMeta>> =
+            if let Some(tx_storage) = &self.tx_ledger_storage {
+                tx_storage
+                    .get_confirmed_transactions_batch(&signatures)
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!("Batch tx fetch failed: {:?}", e);
+                        vec![None; signatures.len()]
+                    })
+            } else {
+                let primary = self.hbase_ledger_storage.as_ref();
+                let fallback = self.fallback_ledger_storage.as_ref();
+                let fetch_futures: Vec<_> = signatures
+                    .iter()
+                    .map(|sig| {
+                        let sig = *sig;
+                        async move {
+                            if let Some(storage) = primary {
+                                if let Ok(Some(tx)) = storage.get_confirmed_transaction(&sig).await {
+                                    return Some(tx);
+                                }
+                            }
+                            if let Some(storage) = fallback {
+                                if let Ok(Some(tx)) = storage.get_confirmed_transaction(&sig).await {
+                                    return Some(tx);
+                                }
+                            }
+                            None
+                        }
+                    })
+                    .collect();
+                futures::future::join_all(fetch_futures).await
+            };
+        let tx_elapsed = t1.elapsed();
+
+        // Apply token accounts filter (post-fetch, may return fewer than limit)
+        let (sig_results, tx_results): (Vec<_>, Vec<_>) = sig_results
+            .into_iter()
+            .zip(tx_results.into_iter())
+            .filter(|(_, tx_opt)| match token_filter {
+                Some(TokenAccountsFilter::All) => {
+                    tx_opt.as_ref().map_or(false, tx_has_token_accounts)
+                }
+                Some(TokenAccountsFilter::BalanceChanged) => {
+                    tx_opt.as_ref().map_or(false, tx_has_token_balance_changed)
+                }
+                _ => true,
+            })
+            .unzip();
+
+        let pagination_token = sig_results.last().map(|(s, _)| s.signature.to_string());
+
+        info!(
+            "getTransactionsForAddress: sig scan {:?} ({} sigs), tx fetch {:?} ({} txs, {} after token filter), total {:?}",
+            sig_elapsed, signatures.len(), tx_elapsed,
+            tx_results.iter().filter(|t| t.is_some()).count(),
+            tx_results.len(),
+            t0.elapsed(),
+        );
+
+        // If we only fetched full data for the token filter, return signatures
+        if details_mode == TransactionDetailsMode::Signatures {
+            let data = sig_results
+                .into_iter()
+                .map(|(s, _)| {
+                    let mut item: RpcConfirmedTransactionStatusWithSignature = s.into();
+                    item.confirmation_status = Some(TransactionConfirmationStatus::Finalized);
+                    serde_json::to_value(item).unwrap_or(serde_json::Value::Null)
+                })
+                .collect();
+            return Ok(GetTransactionsForAddressResponse { data, pagination_token });
+        }
+
+        let mut data = Vec::with_capacity(tx_results.len());
+        for tx_opt in tx_results {
+            if let Some(tx) = tx_opt {
+                match tx.encode(encoding, max_supported_transaction_version).map_err(RpcCustomError::from) {
+                    Ok(encoded_tx) => data.push(serde_json::to_value(encoded_tx).unwrap_or(serde_json::Value::Null)),
+                    Err(e) => return Err(e.into()),
+                }
+            }
+        }
+
+        Ok(GetTransactionsForAddressResponse { data, pagination_token })
     }
 
     pub async fn get_first_available_block(&self) -> Slot {

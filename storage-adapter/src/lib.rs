@@ -474,7 +474,25 @@ pub trait LedgerStorageAdapter: Send + Sync {
         until_signature: Option<&Signature>,
         limit: usize,
         reversed: Option<bool>,
+        before_slot: Option<Slot>,
+        until_slot: Option<Slot>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>>;
+
+    async fn get_transactions_for_address(
+        &self,
+        address: &Pubkey,
+        before_signature: Option<&Signature>,
+        until_signature: Option<&Signature>,
+        limit: usize,
+        reversed: Option<bool>,
+    ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, Option<ConfirmedTransactionWithStatusMeta>)>>;
+
+    /// Batch-fetch full transaction data for a list of signatures in a single HBase call.
+    /// Returns one entry per signature, None if not found.
+    async fn get_confirmed_transactions_batch(
+        &self,
+        signatures: &[Signature],
+    ) -> Result<Vec<Option<ConfirmedTransactionWithStatusMeta>>>;
 
     fn get_signatures_forward(
         &self,
@@ -482,6 +500,8 @@ pub trait LedgerStorageAdapter: Send + Sync {
         before_signature: Option<&Signature>,
         until_signature: Option<&Signature>,
         limit: usize,
+        before_slot: Option<Slot>,
+        until_slot: Option<Slot>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>>;
 
     fn get_signatures_backward(
@@ -490,6 +510,8 @@ pub trait LedgerStorageAdapter: Send + Sync {
         before_signature: Option<&Signature>,
         until_signature: Option<&Signature>,
         limit: usize,
+        before_slot: Option<Slot>,
+        until_slot: Option<Slot>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>>;
 
     async fn get_latest_stored_slot(&self) -> Result<Slot>;

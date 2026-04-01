@@ -8,6 +8,8 @@ use {
     jsonrpc_core::{
         Error, Metadata, Result
     },
+    jsonrpsee::http_client::HttpClientBuilder,
+    jsonrpsee::proc_macros::rpc,
     solana_storage_adapter::LedgerStorageAdapter,
     solana_rpc_client_api::{
         config::*,
@@ -17,7 +19,6 @@ use {
         },
         response::{Response as RpcResponse, *},
     },
-    solana_client::nonblocking::rpc_client::RpcClient,
     solana_clock::{
         Slot,
         UnixTimestamp,
@@ -141,6 +142,32 @@ pub struct RpcBlockCheck {
     pub exists: bool,
 }
 
+#[rpc(client)]
+pub trait SolanaRpcFallback {
+    #[method(name = "getBlocks")]
+    async fn get_blocks(
+        &self,
+        start_slot: Slot,
+        end_slot: Option<Slot>,
+        config: Option<RpcContextConfig>,
+    ) -> std::result::Result<Vec<Slot>, jsonrpsee::core::ClientError>;
+
+    #[method(name = "getBlocksWithLimit")]
+    async fn get_blocks_with_limit(
+        &self,
+        start_slot: Slot,
+        limit: usize,
+        config: Option<RpcContextConfig>,
+    ) -> std::result::Result<Vec<Slot>, jsonrpsee::core::ClientError>;
+
+    #[method(name = "getSignatureStatuses")]
+    async fn get_signature_statuses(
+        &self,
+        signature_strs: Vec<String>,
+        config: Option<RpcSignatureStatusConfig>,
+    ) -> std::result::Result<RpcResponse<Vec<Option<TransactionStatus>>>, jsonrpsee::core::ClientError>;
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct JsonRpcConfig {
     pub enable_rpc_transaction_history: bool,
@@ -229,7 +256,7 @@ pub struct JsonRpcRequestProcessor {
     hbase_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
     fallback_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
     genesis_config: Option<GenesisConfig>,
-    rpc_node_client: Option<Arc<RpcClient>>,
+    rpc_node_client: Option<Arc<jsonrpsee::http_client::HttpClient>>,
 }
 
 impl Metadata for JsonRpcRequestProcessor {}
@@ -285,7 +312,7 @@ impl JsonRpcRequestProcessor {
         };
 
         let rpc_node_client = config.rpc_node_config.rpc_node_address.as_ref().map(|addr| {
-            Arc::new(RpcClient::new(addr.clone()))
+            Arc::new(HttpClientBuilder::default().build(addr).expect("Failed to create JSON-RPC client"))
         });
 
         Self {
@@ -315,6 +342,9 @@ impl JsonRpcRequestProcessor {
         debug!("Checking hbase block");
         if let Err(e) = result {
             debug!("Block error: {}", e);
+        }
+        if let Err(solana_storage_adapter::Error::SlotSkipped { slot }) = result {
+            return Err(RpcCustomError::SlotSkipped { slot: *slot }.into());
         }
         if let Err(solana_storage_adapter::Error::BlockNotFound(slot)) = result {
             return Err(RpcCustomError::LongTermStorageSlotSkipped { slot: *slot }.into());
@@ -393,6 +423,7 @@ impl JsonRpcRequestProcessor {
             return match hbase_result {
                 Ok(_) => Ok(RpcBlockCheck { exists: true }),
                 Err(solana_storage_adapter::Error::BlockNotFound(_)) => Ok(RpcBlockCheck { exists: false }),
+                Err(solana_storage_adapter::Error::SlotSkipped { .. }) => Ok(RpcBlockCheck { exists: false }),
                 Err(err) => Err(RpcCustomError::HBaseError { message: err.to_string() }.into()),
             }
         }
@@ -403,7 +434,6 @@ impl JsonRpcRequestProcessor {
     pub async fn get_blocks(
         &self,
         start_slot: Slot,
-        // FIXME: Maybe make this non-optional?
         end_slot: Option<Slot>,
         config: Option<RpcContextConfig>,
     ) -> Result<Vec<Slot>> {
@@ -412,6 +442,7 @@ impl JsonRpcRequestProcessor {
         check_is_at_least_confirmed(commitment)?;
 
         let max_get_blocks_range = self.config.max_get_blocks_range.unwrap_or(MAX_GET_CONFIRMED_BLOCKS_RANGE);
+        let end_slot = Some(end_slot.unwrap_or(start_slot.saturating_add(max_get_blocks_range)));
 
         if end_slot.unwrap() < start_slot {
             return Ok(vec![]);
@@ -420,6 +451,36 @@ impl JsonRpcRequestProcessor {
             return Err(Error::invalid_params(format!(
                 "Slot range too large; max {max_get_blocks_range}"
             )));
+        }
+
+        let mut blocks = vec![];
+        if let Some(client) = &self.rpc_node_client {
+            blocks = client.get_blocks(start_slot, end_slot, Some(config)).await
+            .map_err(|e| match e {
+                jsonrpsee::core::ClientError::Call(err) => {
+                     Error {
+                        code: jsonrpc_core::ErrorCode::from(err.code() as i64),
+                        message: err.message().to_string(),
+                        data: err.data().and_then(|d| serde_json::to_value(d).ok()),
+                    }
+                },
+                e => {
+                    warn!("getBlocks to RPC node failed: {}", e);
+                    Error::internal_error()
+                }
+            })?;
+        }
+
+        // get_confirmed_blocks inclusive on end_slot
+        let end_slot = match blocks.first().copied() {
+            Some(0) => return Ok(blocks),
+            Some(s) => s - 1,
+            None => end_slot.unwrap(),
+        };
+
+        // Hbase query will return empty
+        if end_slot < start_slot {
+            return Ok(blocks);
         }
 
         if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
@@ -434,35 +495,43 @@ impl JsonRpcRequestProcessor {
             }
 
             return hbase_ledger_storage
-                .get_confirmed_blocks(start_slot, (end_slot.unwrap() - start_slot) as usize + 1) // increment limit by 1 to ensure returned range is inclusive of both start_slot and end_slot
+                .get_confirmed_blocks(start_slot, Some(end_slot), (end_slot - start_slot) as usize + 1) // increment limit by 1 to ensure returned range is inclusive of both start_slot and end_slot
                 .await
                 .map(|mut hbase_blocks| {
-                    hbase_blocks.retain(|&slot| slot <= end_slot.unwrap());
+                    hbase_blocks.extend(blocks);
                     hbase_blocks
                 })
-                .map_err(|_| {
-                    Error::invalid_params(
-                        "HBase query failed (maybe timeout due to too large range?)"
-                            .to_string(),
-                    )
+                .map_err(|e| {
+                    warn!("HBase get_blocks failed: {}", e);
+                    match e {
+                        solana_storage_adapter::Error::BlocksMissingInRange { start_slot, end_slot, limit } => {
+                            RpcCustomError::BlocksMissingInRange { start_slot, end_slot, limit }.into()
+                        },
+                        _ => {
+                            Error::invalid_params(
+                                "HBase query failed (maybe timeout due to too large range?)"
+                                    .to_string(),
+                            )
+                        }
+                    }
                 });
         }
 
-        Ok(vec![])
+        Ok(blocks)
     }
 
     pub async fn get_blocks_with_limit(
         &self,
         start_slot: Slot,
         limit: usize,
-        commitment: Option<CommitmentConfig>,
+        config: Option<RpcContextConfig>,
     ) -> Result<Vec<Slot>> {
         // info!(
         //     "getBlocksWithLimit request received [start_slot: {:?}, limit: {:?}]",
         //     start_slot, limit
         // );
-
-        let commitment = commitment.unwrap_or_default();
+        let config = config.unwrap_or_default();
+        let commitment = config.commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
 
         let max_get_blocks_range = self.config.max_get_blocks_range.unwrap_or(MAX_GET_CONFIRMED_BLOCKS_RANGE);
@@ -471,6 +540,29 @@ impl JsonRpcRequestProcessor {
             return Err(Error::invalid_params(format!(
                 "Limit too large; max {max_get_blocks_range}"
             )));
+        }
+
+        let mut blocks = vec![];
+        if let Some(client) = &self.rpc_node_client {
+            blocks = client.get_blocks_with_limit(start_slot, limit, Some(config)).await
+            .map_err(|e| match e {
+                jsonrpsee::core::ClientError::Call(err) => {
+                     Error {
+                        code: jsonrpc_core::ErrorCode::from(err.code() as i64),
+                        message: err.message().to_string(),
+                        data: err.data().and_then(|d| serde_json::to_value(d).ok()),
+                    }
+                },
+                e => {
+                    warn!("getBlocksWithLimit to RPC node failed: {}", e);
+                    Error::internal_error()
+                }
+            })?;
+
+            if blocks.is_empty() {
+                // start beyond RPC node's highest slot
+                return Ok(vec![]);
+            }
         }
 
         if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
@@ -484,13 +576,39 @@ impl JsonRpcRequestProcessor {
                 }
             }
 
+            // get_confirmed_blocks inclusive on end_slot
+            let end_slot = match blocks.first().copied() {
+                Some(0) => return Ok(blocks),
+                Some(s) => Some(s - 1),
+                None => None,
+            };
+ 
             return Ok(hbase_ledger_storage
-                .get_confirmed_blocks(start_slot, limit)
+                .get_confirmed_blocks(start_slot, end_slot, limit)
                 .await
-                .unwrap_or_default());
+                .map(|mut hbase_blocks| {
+                    hbase_blocks.extend(blocks);
+                    // when RPC node doesn't have any block in range it still returns first `limit` blocks it retains
+                    hbase_blocks.truncate(limit);
+                    hbase_blocks
+                })
+                .map_err(|e| {
+                    warn!("HBase get_blocks_with_limit failed: {}", e);
+                    match e {
+                        solana_storage_adapter::Error::BlocksMissingInRange { start_slot, end_slot, limit } => {
+                            RpcCustomError::BlocksMissingInRange { start_slot, end_slot, limit }.into()
+                        },
+                        _ => {
+                            Error::invalid_params(
+                                "HBase query failed (maybe timeout due to too large range?)"
+                                    .to_string(),
+                            )
+                        }
+                    }
+                })?);
         }
 
-        Ok(vec![])
+        Ok(blocks)
     }
 
 
@@ -583,6 +701,7 @@ impl JsonRpcRequestProcessor {
         config: Option<RpcSignatureStatusConfig>,
     ) -> Result<RpcResponse<Vec<Option<TransactionStatus>>>> {
         let search_transaction_history = config
+            .as_ref()
             .map(|x| x.search_transaction_history)
             .unwrap_or(false);
 
@@ -598,24 +717,17 @@ impl JsonRpcRequestProcessor {
         let mut missing_idxs: Vec<usize> = vec![];
 
         if let Some(client) = &self.rpc_node_client {
-            let response = if search_transaction_history {
-                client
-                    .get_signature_statuses_with_history(&signatures)
-                    .await
-            } else {
-                client.get_signature_statuses(&signatures).await
-            }
-            .map_err(|e| match *e.kind {
-                solana_client::client_error::ClientErrorKind::RpcError(
-                    solana_client::rpc_request::RpcError::RpcResponseError {
-                        code,
-                        message,
-                        data: _,
-                    },
-                ) => Error {
-                    code: jsonrpc_core::ErrorCode::from(code),
-                    message,
-                    data: None,
+            let signature_strs = signatures.iter().map(|s| s.to_string()).collect();
+            let response = client
+            .get_signature_statuses(signature_strs, config)
+            .await
+            .map_err(|e| match e {
+                jsonrpsee::core::ClientError::Call(err) => {
+                     Error {
+                        code: jsonrpc_core::ErrorCode::from(err.code() as i64),
+                        message: err.message().to_string(),
+                        data: err.data().and_then(|d| serde_json::to_value(d).ok()),
+                    }
                 },
                 e => {
                     warn!("getSignatureStatuses to RPC node failed: {}", e);
@@ -848,7 +960,7 @@ impl JsonRpcRequestProcessor {
         }
 
         let first_confirmed_block_in_epoch = *self
-            .get_blocks_with_limit(first_slot_in_epoch, 1, context_config.commitment)
+            .get_blocks_with_limit(first_slot_in_epoch, 1, Some(context_config))
             .await?
             .first()
             .ok_or(RpcCustomError::BlockNotAvailable {
@@ -950,7 +1062,7 @@ impl JsonRpcRequestProcessor {
                 .get_blocks_with_limit(
                     first_confirmed_block_in_epoch.saturating_add(1),
                     scan_limit,
-                    context_config.commitment,
+                    Some(context_config),
                 )
                 .await?;
             for slot in block_list.into_iter() {
@@ -1037,7 +1149,7 @@ impl JsonRpcRequestProcessor {
                 .get_blocks_with_limit(
                     first_confirmed_block_in_epoch + 1,
                     num_partitions,
-                    context_config.commitment,
+                    Some(context_config),
                 )
                 .await?;
 

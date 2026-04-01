@@ -11,6 +11,7 @@ use {
 
 pub const JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE: i64 = -32004;
 pub const JSON_RPC_SERVER_ERROR_NODE_UNHEALTHY: i64 = -32005;
+pub const JSON_RPC_SERVER_ERROR_SLOT_SKIPPED: i64 = -32007;
 pub const JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_SLOT_SKIPPED: i64 = -32009;
 pub const JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE: i64 = -32011;
 pub const JSON_RPC_SCAN_ERROR: i64 = -32012;
@@ -21,6 +22,7 @@ pub const JSON_RPC_HBASE_ERROR: i64 = -32017;
 pub const JSON_RPC_SERVER_ERROR_SLOT_NOT_EPOCH_BOUNDARY: i64 = -32018;
 pub const JSON_RPC_SERVER_ERROR_EPOCH_REWARDS_PERIOD_ACTIVE: i64 = -32019;
 pub const JSON_RPC_SERVER_ERROR_METHOD_NOT_SUPPORTED: i64 = -32020;
+pub const JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_BLOCKS_MISSING: i64 = -32021;
 
 #[derive(Error, Debug)]
 pub enum RpcCustomError {
@@ -50,6 +52,14 @@ pub enum RpcCustomError {
     MethodNotSupported(String),
     #[error("LongTermStorageUnreachable")]
     LongTermStorageUnreachable,
+    #[error("SlotSkipped")]
+    SlotSkipped { slot: Slot },
+    #[error("Block(s) missing in range: {start_slot}-{:?}, limit: {limit}", end_slot)]
+    BlocksMissingInRange {
+        start_slot: Slot,
+        end_slot: Option<Slot>,
+        limit: usize,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -142,6 +152,20 @@ impl From<RpcCustomError> for Error {
             RpcCustomError::LongTermStorageUnreachable => Self {
                 code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_UNREACHABLE),
                 message: "Failed to query long-term storage; please try again".to_string(),
+                data: None,
+            },
+            RpcCustomError::SlotSkipped { slot } => Self {
+                code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_SLOT_SKIPPED),
+                message: format!(
+                    "Slot {slot} was skipped, or missing due to ledger jump to recent snapshot"
+                ),
+                data: None,
+            },
+            RpcCustomError::BlocksMissingInRange { start_slot, end_slot, limit } => Self {
+                code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_BLOCKS_MISSING),
+                message: format!(
+                    "Blocks missing in long-term storage range: {start_slot}-{:?}, limit: {limit}", end_slot
+                ),
                 data: None,
             },
         }

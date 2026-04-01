@@ -27,7 +27,6 @@ serde_json = { workspace = true }
 
 solana-perf = { workspace = true }
 solana-rpc-client-api = { workspace = true }
-solana-client = { workspace = true }
 solana-storage-hbase = { workspace = true }
 solana-storage-adapter = { workspace = true }
 solana-transaction-status = { workspace = true }
@@ -62,6 +61,7 @@ solana-epoch-rewards-hasher = "3.0.0"
 tar = { workspace = true }
 rand = { workspace = true }
 bzip2 = { workspace = true }
+jsonrpsee = { workspace = true }
 
 [dev-dependencies]
 matches = { workspace = true }

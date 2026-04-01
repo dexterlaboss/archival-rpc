@@ -4,6 +4,7 @@ use {
     crate::{
         custom_error::RpcCustomError,
     },
+    futures::future::OptionFuture,
     serde_json,
     jsonrpc_core::{
         Error, Metadata, Result
@@ -156,18 +157,6 @@ pub struct GetTransactionsForAddressResponse {
     pub pagination_token: Option<String>,
 }
 
-/// Approximate conversion from Unix timestamp to Solana slot.
-/// Uses mainnet genesis time and ~400ms/slot average.
-pub fn block_time_to_slot(block_time: i64) -> Slot {
-    const GENESIS_UNIX_TIMESTAMP: i64 = 1584368940;
-    const SLOTS_PER_SECOND: f64 = 2.149; // ~400ms/slot average
-    let elapsed = block_time.saturating_sub(GENESIS_UNIX_TIMESTAMP);
-    if elapsed <= 0 {
-        0
-    } else {
-        (elapsed as f64 * SLOTS_PER_SECOND) as Slot
-    }
-}
 
 /// Returns true if the transaction has any token account involvement.
 fn tx_has_token_accounts(tx: &ConfirmedTransactionWithStatusMeta) -> bool {
@@ -876,28 +865,15 @@ impl JsonRpcRequestProcessor {
         // Derive `reversed` from sort_order (Asc = oldest first = forward scan)
         let reversed = sort_order.as_ref().map(|o| matches!(o, SortOrder::Asc));
 
-        // Extract slot bounds from slot/blockTime range filters.
-        // In a backward scan: before_slot = upper bound (newest), until_slot = lower bound (oldest).
-        // lte/lt blockTime → upper bound → before_slot
-        // gte/gt blockTime → lower bound → until_slot
+        // Extract slot bounds from explicit slot filters only.
+        // blockTime filtering is handled exactly via post-scan filter; no approximation needed.
         let (before_slot, until_slot) = if let Some(ref f) = filters {
-            // blockTime → slot approximation
-            let bt_upper: Option<Slot> = f.block_time.as_ref().and_then(|b| {
-                b.lte.map(block_time_to_slot).or_else(|| b.lt.map(|t| block_time_to_slot(t).saturating_sub(1)))
-            });
-            let bt_lower: Option<Slot> = f.block_time.as_ref().and_then(|b| {
-                b.gte.map(block_time_to_slot).or_else(|| b.gt.map(|t| block_time_to_slot(t) + 1))
-            });
-            // Direct slot bounds
-            let sl_upper: Option<Slot> = f.slot.as_ref().and_then(|s| {
+            let before_slot = f.slot.as_ref().and_then(|s| {
                 s.lte.or_else(|| s.lt.map(|v| v.saturating_sub(1)))
             });
-            let sl_lower: Option<Slot> = f.slot.as_ref().and_then(|s| {
+            let until_slot = f.slot.as_ref().and_then(|s| {
                 s.gte.or_else(|| s.gt.map(|v| v + 1))
             });
-            // Slot filter takes precedence over blockTime approximation
-            let before_slot = sl_upper.or(bt_upper);
-            let until_slot = sl_lower.or(bt_lower);
             (before_slot, until_slot)
         } else {
             (None, None)
@@ -947,6 +923,18 @@ impl JsonRpcRequestProcessor {
             TransactionStatusFilter::Succeeded => sig_results.retain(|(s, _)| s.err.is_none()),
             TransactionStatusFilter::Failed    => sig_results.retain(|(s, _)| s.err.is_some()),
             TransactionStatusFilter::Any       => {}
+        }
+
+        // Exact block_time post-filter using the block_time stored in each tx-by-addr row.
+        // May return fewer than limit (same behavior as status/tokenAccounts filters).
+        if let Some(Some(ref bt)) = filters.as_ref().map(|f| f.block_time.as_ref()) {
+            sig_results.retain(|(s, _)| {
+                let Some(block_time) = s.block_time else { return true };
+                bt.gte.map_or(true, |t| block_time >= t)
+                    && bt.gt.map_or(true, |t| block_time > t)
+                    && bt.lte.map_or(true, |t| block_time <= t)
+                    && bt.lt.map_or(true, |t| block_time < t)
+            });
         }
 
         if sig_results.is_empty() {

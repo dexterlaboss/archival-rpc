@@ -175,7 +175,7 @@ pub mod storage_rpc_full {
             meta: Self::Metadata,
             start_slot: Slot,
             limit: usize,
-            commitment: Option<CommitmentConfig>,
+            config: Option<RpcContextConfig>,
         ) -> BoxFuture<Result<Vec<Slot>>>;
 
         #[rpc(meta, name = "getTransaction")]
@@ -283,7 +283,7 @@ pub mod storage_rpc_full {
             meta: Self::Metadata,
             start_slot: Slot,
             limit: usize,
-            commitment: Option<CommitmentConfig>,
+            config: Option<RpcContextConfig>,
         ) -> BoxFuture<Result<Vec<Slot>>> {
             info!(
                 "getBlocksWithLimit request received [start_slot: {:?}, limit: {:?}]",
@@ -291,7 +291,7 @@ pub mod storage_rpc_full {
             );
 
             Box::pin(async move {
-                meta.get_blocks_with_limit(start_slot, limit, commitment)
+                meta.get_blocks_with_limit(start_slot, limit, config)
                     .await
             })
         }
@@ -494,7 +494,11 @@ pub mod storage_rpc_deprecated_v1_7 {
                 start_slot, limit,
             );
             Box::pin(async move {
-                meta.get_blocks_with_limit(start_slot, limit, commitment)
+                let config = commitment.map(|commitment| RpcContextConfig {
+                    commitment: Some(commitment),
+                    min_context_slot: None,
+                });
+                meta.get_blocks_with_limit(start_slot, limit, config)
                     .await
             })
         }

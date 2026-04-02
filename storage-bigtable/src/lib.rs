@@ -436,9 +436,10 @@ impl LedgerStorageAdapter for LedgerStorage {
 
     /// Fetch the next slots after the provided slot that contains a block
     ///
+    /// end_slot: optional slot to end the search at (inclusive)
     /// start_slot: slot to start the search from (inclusive)
     /// limit: stop after this many slots have been found
-    async fn get_confirmed_blocks(&self, start_slot: Slot, limit: usize) -> Result<Vec<Slot>> {
+    async fn get_confirmed_blocks(&self, start_slot: Slot, end_slot: Option<Slot>, limit: usize) -> Result<Vec<Slot>> {
         trace!(
             "LedgerStorage::get_confirmed_blocks request received: {:?} {:?}",
             start_slot,
@@ -450,7 +451,7 @@ impl LedgerStorageAdapter for LedgerStorage {
             .get_row_keys(
                 "blocks",
                 Some(slot_to_blocks_key(start_slot, false)),
-                None,
+                end_slot.map(|s| slot_to_blocks_key(s.saturating_add(1), false)),
                 limit as i64,
             )
             .await?;

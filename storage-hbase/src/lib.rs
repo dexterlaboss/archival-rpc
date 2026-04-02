@@ -502,6 +502,70 @@ impl LedgerStorage {
         Ok(index_entry)
     }
 
+    fn get_blocks_meta_range(
+        hbase: &mut HBase,
+        start_slot: Slot,
+        end_slot: Option<Slot>,
+        limit: usize,
+    ) -> Result<Vec<StoredCarIndexEntry>> {
+        if end_slot.is_some_and(|s| s < start_slot) {
+            return Ok(vec![]);
+        }
+
+        let mut row_data = Vec::new();
+
+        // get the previous block to detect missing blocks
+        if start_slot > 0 {
+            row_data.extend(hbase.get_row_data(
+                "blocks_meta",
+                // blocks_meta table does not use MD5 salt for its row keys
+                Some(slot_to_blocks_key(start_slot - 1, false)),
+                None,
+                1,
+                true,
+            )?);
+        }
+
+        row_data.extend(hbase.get_row_data(
+            "blocks_meta",
+            // blocks_meta table does not use MD5 salt for its row keys
+            Some(slot_to_blocks_key(start_slot, false)),
+            end_slot.map(|s| slot_to_blocks_key(s.saturating_add(1), false)),
+            limit as i64,
+            false,
+        )?);
+
+        let mut result: Vec<StoredCarIndexEntry> = Vec::with_capacity(limit);
+
+        let mut previous_block_hash: Option<String> = None;
+        for (row_key, data) in row_data {
+            let deserialized_cell_data = hbase::deserialize_protobuf_or_bincode_cell_data::<
+                StoredCarIndexEntry,
+                car_index::CarIndexEntry,
+            >(&data, "blocks_meta", row_key.clone())?;
+            let index_entry: StoredCarIndexEntry = match deserialized_cell_data {
+                hbase::CellData::Bincode(entry) => entry.into(),
+                hbase::CellData::Protobuf(entry) => entry.try_into().map_err(|_err| {
+                    hbase::Error::ObjectCorrupt(format!("blocks_meta/{}", row_key))
+                })?,
+            };
+
+            if let Some(ref previous_block_hash) = previous_block_hash {
+                if &index_entry.previous_block_hash != previous_block_hash {
+                    return Err(Error::BlocksMissingInRange { start_slot, end_slot, limit });
+                }
+            }
+            previous_block_hash = Some(index_entry.block_hash.clone());
+
+            // discard block before range
+            if index_entry.slot >= start_slot {
+                result.push(index_entry);
+            }
+        }
+
+        Ok(result)
+    }
+
     /// Get block time from blocks_meta table
     pub async fn get_block_time(&self, slot: Slot) -> Result<Option<i64>> {
         if slot == 0 {
@@ -564,33 +628,36 @@ impl LedgerStorageAdapter for LedgerStorage {
     /// Fetch the next slots after the provided slot that contains a block
     ///
     /// start_slot: slot to start the search from (inclusive)
+    /// end_slot: optional slot to end the search at (inclusive)
     /// limit: stop after this many slots have been found
-    async fn get_confirmed_blocks(&self, start_slot: Slot, limit: usize) -> Result<Vec<Slot>> {
+    async fn get_confirmed_blocks(&self, start_slot: Slot, end_slot: Option<Slot>, limit: usize) -> Result<Vec<Slot>> {
         debug!(
             "LedgerStorage::get_confirmed_blocks request received: {:?} {:?}",
             start_slot, limit
         );
 
-        let mut hbase_conn = self.connection_pool.get().unwrap();
-        let mut hbase = HBase::new_borrowed(&mut *hbase_conn, self.namespace.clone());
+        let connection_pool = self.connection_pool.clone();
+        let namespace = self.namespace.clone();
 
         // Check if we should use blocks_meta table
         if self.use_hbase_blocks_meta {
-            // blocks_meta table does not use MD5 salt for its row keys
-            let start_key = slot_to_blocks_key(start_slot, false);
-            let row_keys = hbase
-                .get_row_keys(
-                    "blocks_meta",
-                    Some(start_key),
-                    None, // go to end
-                    limit as i64,
-                    false, // not reversed
-                )?;
-            
-            return Ok(row_keys
-                .into_iter()
-                .filter_map(|key| key_to_slot(&key))
-                .collect());
+            let blocks = self
+                .runtime
+                .spawn_blocking(move || {
+                    let mut hbase_conn = connection_pool.get().unwrap();
+                    let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace);
+
+                    let blocks = Self::get_blocks_meta_range(&mut hbase, start_slot, end_slot, limit)?
+                        .into_iter()
+                        .map(|entry| entry.slot)
+                        .collect();
+
+                    Ok::<Vec<Slot>, Error>(blocks)
+                })
+                .await
+                .map_err(Error::TokioJoinError)??;
+
+            return Ok(blocks);
         }
 
         if self.use_md5_row_key_salt {
@@ -598,14 +665,21 @@ impl LedgerStorageAdapter for LedgerStorage {
         }
 
         // inc_new_counter_debug!("storage-hbase-query", 1);
-        let blocks = hbase
-            .get_row_keys(
-                "blocks",
-                Some(slot_to_blocks_key(start_slot, false)),
-                Some(slot_to_blocks_key(start_slot + limit as u64, false)), // None,
-                limit as i64,
-                false
-            )?;
+        let blocks = self
+            .runtime
+            .spawn_blocking(move || {
+                let mut hbase_conn = connection_pool.get().unwrap();
+                let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace);
+                hbase.get_row_keys(
+                    "blocks",
+                    Some(slot_to_blocks_key(start_slot, false)),
+                    end_slot.map(|s| slot_to_blocks_key(s.saturating_add(1), false)),
+                    limit as i64,
+                    false,
+                )
+            })
+            .await
+            .map_err(Error::TokioJoinError)??;
         Ok(blocks.into_iter().filter_map(|s| key_to_slot(&s)).collect())
     }
 
@@ -635,7 +709,13 @@ impl LedgerStorageAdapter for LedgerStorage {
                 slot_to_blocks_key(slot, false),
             )
             .map_err(|err| match err {
-                hbase::Error::RowNotFound => Error::BlockNotFound(slot),
+                hbase::Error::RowNotFound => {
+                    match Self::get_blocks_meta_range(&mut hbase, slot, None, 1).as_deref() {
+                        // no missing blocks error so this slot is skipped
+                        Ok([_next_block]) => Error::SlotSkipped{ slot },
+                        _ => Error::BlockNotFound(slot),
+                    }
+                }
                 other => Error::StorageBackendError(Box::new(other)),
             })?;
 

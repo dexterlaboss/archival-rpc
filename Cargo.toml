@@ -78,7 +78,6 @@ rand = "0.8.5"
 
 solana-logger = "=3.0.0"
 solana-rpc-client-api = "=3.1.8"
-solana-client = "=3.1.8"
 solana-transaction-status = "=3.1.8"
 solana-version = "=3.1.8"
 
@@ -131,6 +130,7 @@ hbase-thrift = "1.2.0"
 thrift = "0.17.0"
 thrift-pool = { version = "1.5.0", features = ["r2d2" ] }
 r2d2 = "0.8.10"
+jsonrpsee = { version = "0.26.0", features = ["http-client", "macros"] }
 
 dexter-ipfs-car = "0.3.0"
 

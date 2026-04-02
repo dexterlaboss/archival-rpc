@@ -79,6 +79,16 @@ pub enum Error {
 
     #[error("Cache Error: {0}")]
     CacheError(String),
+
+    #[error("SlotSkipped")]
+    SlotSkipped { slot: Slot },
+
+    #[error("Block(s) missing in range: {start_slot}-{:?}, limit: {limit}", end_slot)]
+    BlocksMissingInRange {
+        start_slot: Slot,
+        end_slot: Option<Slot>,
+        limit: usize,
+    },
 }
 
 impl std::convert::From<std::io::Error> for Error {
@@ -449,7 +459,7 @@ impl From<LegacyTransactionByAddrInfo> for TransactionByAddrInfo {
 pub trait LedgerStorageAdapter: Send + Sync {
     async fn get_first_available_block(&self) -> Result<Option<Slot>>;
 
-    async fn get_confirmed_blocks(&self, start_slot: Slot, limit: usize) -> Result<Vec<Slot>>;
+    async fn get_confirmed_blocks(&self, start_slot: Slot, end_slot: Option<Slot>, limit: usize) -> Result<Vec<Slot>>;
 
     async fn get_confirmed_block(&self, slot: Slot, use_cache: bool) -> Result<ConfirmedBlock>;
 

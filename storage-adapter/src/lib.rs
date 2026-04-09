@@ -484,6 +484,15 @@ pub trait LedgerStorageAdapter: Send + Sync {
         until_signature: Option<&Signature>,
         limit: usize,
         reversed: Option<bool>,
+    ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>>;
+
+    async fn get_confirmed_signatures_for_address_with_slot_bounds(
+        &self,
+        address: &Pubkey,
+        before_signature: Option<&Signature>,
+        until_signature: Option<&Signature>,
+        limit: usize,
+        reversed: Option<bool>,
         before_slot: Option<Slot>,
         until_slot: Option<Slot>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>>;
@@ -510,8 +519,6 @@ pub trait LedgerStorageAdapter: Send + Sync {
         before_signature: Option<&Signature>,
         until_signature: Option<&Signature>,
         limit: usize,
-        before_slot: Option<Slot>,
-        until_slot: Option<Slot>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>>;
 
     fn get_signatures_backward(
@@ -520,8 +527,6 @@ pub trait LedgerStorageAdapter: Send + Sync {
         before_signature: Option<&Signature>,
         until_signature: Option<&Signature>,
         limit: usize,
-        before_slot: Option<Slot>,
-        until_slot: Option<Slot>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>>;
 
     async fn get_latest_stored_slot(&self) -> Result<Slot>;

@@ -575,8 +575,6 @@ impl LedgerStorageAdapter for LedgerStorage {
         until_signature: Option<&Signature>,
         limit: usize,
         _reversed: Option<bool>,
-        _before_slot: Option<Slot>,
-        _until_slot: Option<Slot>,
     ) -> Result<
         Vec<(
             ConfirmedTransactionStatusWithSignature,
@@ -712,8 +710,6 @@ impl LedgerStorageAdapter for LedgerStorage {
         _before_signature: Option<&Signature>,
         _until_signature: Option<&Signature>,
         _limit: usize,
-        _before_slot: Option<Slot>,
-        _until_slot: Option<Slot>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {
         Err(Error::StorageBackendError(Box::new(std::io::Error::new(
             std::io::ErrorKind::Other,
@@ -727,6 +723,20 @@ impl LedgerStorageAdapter for LedgerStorage {
         _before_signature: Option<&Signature>,
         _until_signature: Option<&Signature>,
         _limit: usize,
+    ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {
+        Err(Error::StorageBackendError(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Method not supported",
+        ))))
+    }
+
+    async fn get_confirmed_signatures_for_address_with_slot_bounds(
+        &self,
+        _address: &Pubkey,
+        _before_signature: Option<&Signature>,
+        _until_signature: Option<&Signature>,
+        _limit: usize,
+        _reversed: Option<bool>,
         _before_slot: Option<Slot>,
         _until_slot: Option<Slot>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {

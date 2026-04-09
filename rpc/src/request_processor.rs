@@ -927,8 +927,6 @@ impl JsonRpcRequestProcessor {
                         until.as_ref(),
                         limit,
                         reversed,
-                        None,
-                        None,
                     )
                     .await;
                 match hbase_results {
@@ -1014,7 +1012,7 @@ impl JsonRpcRequestProcessor {
         let t0 = Instant::now();
         let mut sig_results = if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
             hbase_ledger_storage
-                .get_confirmed_signatures_for_address(
+                .get_confirmed_signatures_for_address_with_slot_bounds(
                     &address,
                     before.as_ref(),
                     until.as_ref(),

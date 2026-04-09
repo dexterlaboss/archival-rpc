@@ -619,6 +619,294 @@ impl LedgerStorage {
             Err(err) => Err(err.into()),
         }
     }
+
+    // Dedicated forward scan for getTransactionsForAddress — accepts explicit slot bounds
+    // to skip the signature→slot HBase lookup when slot filters are provided.
+    fn get_signatures_forward_with_slot_bounds(
+        &self,
+        address: &Pubkey,
+        before_signature: Option<&Signature>,
+        until_signature: Option<&Signature>,
+        limit: usize,
+        before_slot: Option<Slot>,
+        until_slot: Option<Slot>,
+    ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {
+        let namespace = self.namespace.clone();
+        let mut hbase_conn = self.connection_pool.get().unwrap();
+        let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace);
+        let address_prefix = format!("{address}/");
+
+        // first_slot: lower bound of forward scan (oldest slot to start from)
+        let (first_slot, before_transaction_index) = if let Some(slot) = until_slot {
+            (slot, u32::MAX)
+        } else if let Some(sig) = until_signature {
+            match self.lookup_slot_for_signature(&mut hbase, sig)? {
+                Some((slot, index)) => (slot, index),
+                None => return Ok(vec![]),
+            }
+        } else {
+            (0, u32::MAX)
+        };
+
+        // last_slot: upper bound of forward scan (newest slot to stop at)
+        let (last_slot, until_transaction_index) = if let Some(slot) = before_slot {
+            (slot, 0)
+        } else if let Some(sig) = before_signature {
+            match self.lookup_slot_for_signature(&mut hbase, sig)? {
+                Some((slot, index)) => (slot, index),
+                None => return Ok(vec![]),
+            }
+        } else {
+            (Slot::MAX, 0)
+        };
+
+        debug!("get_signatures_forward_with_slot_bounds: first_slot={} idx={}, last_slot={} idx={}",
+            first_slot, before_transaction_index, last_slot, until_transaction_index);
+
+        let mut infos = vec![];
+
+        debug!("Getting the starting slot length from tx-by-addr");
+
+        let starting_slot_tx_len = hbase
+            .get_protobuf_or_bincode_cell::<Vec<LegacyTransactionByAddrInfo>, tx_by_addr::TransactionByAddr>(
+                "tx-by-addr",
+                format!("{}{}", address_prefix, slot_to_tx_by_addr_key(first_slot)),
+            )
+            .map(|cell_data| {
+                match cell_data {
+                    hbase::CellData::Bincode(tx_by_addr) => tx_by_addr.len(),
+                    hbase::CellData::Protobuf(tx_by_addr) => tx_by_addr.tx_by_addrs.len(),
+                }
+            })
+            .unwrap_or(0);
+
+        debug!("Got starting slot tx len: {:?}", starting_slot_tx_len);
+
+        let tx_by_addr_data = hbase
+            .get_row_data(
+                "tx-by-addr",
+                Some(format!(
+                    "{}{}",
+                    address_prefix,
+                    slot_to_tx_by_addr_key(first_slot),
+                )),
+                Some(format!(
+                    "{}{}",
+                    address_prefix,
+                    slot_to_tx_by_addr_key(last_slot.saturating_add(1)),
+                )),
+                limit as i64 + starting_slot_tx_len as i64,
+                true, // reversed = true for forward search
+            )?;
+
+        debug!("Loaded {:?} tx-by-addr entries", tx_by_addr_data.len());
+
+        'outer: for (row_key, data) in tx_by_addr_data {
+            let slot = !key_to_slot(&row_key[address_prefix.len()..]).ok_or_else(|| {
+                hbase::Error::ObjectCorrupt(format!(
+                    "Failed to convert key to slot: tx-by-addr/{row_key}"
+                ))
+            })?;
+
+            debug!("Deserializing tx-by-addr result data");
+
+            let deserialized_cell_data = hbase::deserialize_protobuf_or_bincode_cell_data::<
+                Vec<LegacyTransactionByAddrInfo>,
+                tx_by_addr::TransactionByAddr,
+            >(&data, "tx-by-addr", row_key.clone())?;
+
+            let cell_data: Vec<TransactionByAddrInfo> = match deserialized_cell_data {
+                hbase::CellData::Bincode(tx_by_addr) => {
+                    tx_by_addr.into_iter().map(|legacy| legacy.into()).collect()
+                }
+                hbase::CellData::Protobuf(tx_by_addr) => {
+                    tx_by_addr.try_into().map_err(|error| {
+                        hbase::Error::ObjectCorrupt(format!(
+                            "Failed to deserialize: {}: tx-by-addr/{}",
+                            error,
+                            row_key.clone()
+                        ))
+                    })?
+                }
+            };
+
+            debug!("Filtering the result data");
+
+            for tx_by_addr_info in cell_data.into_iter() {
+                debug!("Checking result [slot: {:?}, index: {:?}], signature: {:?}", slot, tx_by_addr_info.index, tx_by_addr_info.signature);
+
+                if slot == first_slot && tx_by_addr_info.index <= before_transaction_index {
+                    continue;
+                }
+                if slot == last_slot && tx_by_addr_info.index >= until_transaction_index {
+                    continue;
+                }
+
+                infos.push((
+                    ConfirmedTransactionStatusWithSignature {
+                        signature: tx_by_addr_info.signature,
+                        slot,
+                        err: tx_by_addr_info.err,
+                        memo: tx_by_addr_info.memo,
+                        block_time: tx_by_addr_info.block_time,
+                    },
+                    tx_by_addr_info.index,
+                ));
+
+                if infos.len() >= limit {
+                    break 'outer;
+                }
+            }
+        }
+
+        debug!("get_signatures_forward_with_slot_bounds: returning {} entries", infos.len());
+        Ok(infos)
+    }
+
+    // Dedicated backward scan for getTransactionsForAddress — accepts explicit slot bounds
+    // to skip the signature→slot HBase lookup when slot filters are provided.
+    fn get_signatures_backward_with_slot_bounds(
+        &self,
+        address: &Pubkey,
+        before_signature: Option<&Signature>,
+        until_signature: Option<&Signature>,
+        limit: usize,
+        before_slot: Option<Slot>,
+        until_slot: Option<Slot>,
+    ) -> Result<
+        Vec<(
+            ConfirmedTransactionStatusWithSignature,
+            u32,
+        )>,
+    > {
+        let namespace = self.namespace.clone();
+        let mut hbase_conn = self.connection_pool.get().unwrap();
+        let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace);
+        let address_prefix = format!("{address}/");
+
+        // first_slot: upper bound of backward scan (newest slot, start of scan)
+        let (first_slot, before_transaction_index) = if let Some(slot) = before_slot {
+            (slot, 0)
+        } else if let Some(sig) = before_signature {
+            match self.lookup_slot_for_signature(&mut hbase, sig)? {
+                Some((slot, index)) => (slot, index),
+                None => return Ok(vec![]),
+            }
+        } else {
+            (Slot::MAX, 0)
+        };
+
+        // last_slot: lower bound of backward scan (oldest slot, end of scan)
+        let (last_slot, until_transaction_index) = if let Some(slot) = until_slot {
+            (slot, u32::MAX)
+        } else if let Some(sig) = until_signature {
+            match self.lookup_slot_for_signature(&mut hbase, sig)? {
+                Some((slot, index)) => (slot, index),
+                None => return Ok(vec![]),
+            }
+        } else {
+            (0, u32::MAX)
+        };
+
+        debug!("get_signatures_backward_with_slot_bounds: first_slot={} idx={}, last_slot={} idx={}",
+            first_slot, before_transaction_index, last_slot, until_transaction_index);
+
+        let mut infos = vec![];
+
+        let starting_slot_tx_len = hbase
+            .get_protobuf_or_bincode_cell::<Vec<LegacyTransactionByAddrInfo>, tx_by_addr::TransactionByAddr>(
+                "tx-by-addr",
+                format!("{}{}", address_prefix, slot_to_tx_by_addr_key(first_slot)),
+            )
+            .map(|cell_data| {
+                match cell_data {
+                    hbase::CellData::Bincode(tx_by_addr) => tx_by_addr.len(),
+                    hbase::CellData::Protobuf(tx_by_addr) => tx_by_addr.tx_by_addrs.len(),
+                }
+            })
+            .unwrap_or(0);
+
+        debug!("Got starting slot tx len: {:?}", starting_slot_tx_len);
+
+        // Return the next tx-by-addr data of amount `limit` plus extra to account for the largest
+        // number that might be filtered out
+        let tx_by_addr_data = hbase
+            .get_row_data(
+                "tx-by-addr",
+                Some(format!(
+                    "{}{}",
+                    address_prefix,
+                    slot_to_tx_by_addr_key(first_slot),
+                )),
+                Some(format!(
+                    "{}{}",
+                    address_prefix,
+                    slot_to_tx_by_addr_key(last_slot.saturating_sub(1)),
+                )),
+                limit as i64 + starting_slot_tx_len as i64,
+                false
+            )?;
+
+        debug!("Loaded {:?} tx-by-addr entries", tx_by_addr_data.len());
+
+        'outer: for (row_key, data) in tx_by_addr_data {
+            let slot = !key_to_slot(&row_key[address_prefix.len()..]).ok_or_else(|| {
+                hbase::Error::ObjectCorrupt(format!(
+                    "Failed to convert key to slot: tx-by-addr/{row_key}"
+                ))
+            })?;
+
+            debug!("Deserializing tx-by-addr result data");
+
+            let deserialized_cell_data = hbase::deserialize_protobuf_or_bincode_cell_data::<
+                Vec<LegacyTransactionByAddrInfo>,
+                tx_by_addr::TransactionByAddr,
+            >(&data, "tx-by-addr", row_key.clone())?;
+
+            let mut cell_data: Vec<TransactionByAddrInfo> = match deserialized_cell_data {
+                hbase::CellData::Bincode(tx_by_addr) => {
+                    tx_by_addr.into_iter().map(|legacy| legacy.into()).collect()
+                }
+                hbase::CellData::Protobuf(tx_by_addr) => {
+                    tx_by_addr.try_into().map_err(|error| {
+                        hbase::Error::ObjectCorrupt(format!(
+                            "Failed to deserialize: {}: tx-by-addr/{}",
+                            error,
+                            row_key.clone()
+                        ))
+                    })?
+                }
+            };
+
+            cell_data.reverse();
+
+            for tx_by_addr_info in cell_data.into_iter() {
+                if slot == first_slot && tx_by_addr_info.index >= before_transaction_index {
+                    continue;
+                }
+                if slot == last_slot && tx_by_addr_info.index <= until_transaction_index {
+                    continue;
+                }
+
+                infos.push((
+                    ConfirmedTransactionStatusWithSignature {
+                        signature: tx_by_addr_info.signature,
+                        slot,
+                        err: tx_by_addr_info.err,
+                        memo: tx_by_addr_info.memo,
+                        block_time: tx_by_addr_info.block_time,
+                    },
+                    tx_by_addr_info.index,
+                ));
+                if infos.len() >= limit {
+                    break 'outer;
+                }
+            }
+        }
+
+        debug!("get_signatures_backward_with_slot_bounds: returning {} entries", infos.len());
+        Ok(infos)
+    }
 }
 
 #[async_trait]
@@ -1266,6 +1554,29 @@ impl LedgerStorageAdapter for LedgerStorage {
         until_signature: Option<&Signature>,
         limit: usize,
         reversed: Option<bool>,
+    ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {
+        self.runtime.spawn_blocking({
+            let self_clone = self.clone();
+            let address = *address;
+            let before_signature = before_signature.copied();
+            let until_signature = until_signature.copied();
+            move || {
+                if reversed.unwrap_or(false) {
+                    self_clone.get_signatures_forward(&address, before_signature.as_ref(), until_signature.as_ref(), limit)
+                } else {
+                    self_clone.get_signatures_backward(&address, before_signature.as_ref(), until_signature.as_ref(), limit)
+                }
+            }
+        }).await.map_err(Error::TokioJoinError)?
+    }
+
+    async fn get_confirmed_signatures_for_address_with_slot_bounds(
+        &self,
+        address: &Pubkey,
+        before_signature: Option<&Signature>,
+        until_signature: Option<&Signature>,
+        limit: usize,
+        reversed: Option<bool>,
         before_slot: Option<Slot>,
         until_slot: Option<Slot>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {
@@ -1276,9 +1587,9 @@ impl LedgerStorageAdapter for LedgerStorage {
             let until_signature = until_signature.copied();
             move || {
                 if reversed.unwrap_or(false) {
-                    self_clone.get_signatures_forward(&address, before_signature.as_ref(), until_signature.as_ref(), limit, before_slot, until_slot)
+                    self_clone.get_signatures_forward_with_slot_bounds(&address, before_signature.as_ref(), until_signature.as_ref(), limit, before_slot, until_slot)
                 } else {
-                    self_clone.get_signatures_backward(&address, before_signature.as_ref(), until_signature.as_ref(), limit, before_slot, until_slot)
+                    self_clone.get_signatures_backward_with_slot_bounds(&address, before_signature.as_ref(), until_signature.as_ref(), limit, before_slot, until_slot)
                 }
             }
         }).await.map_err(Error::TokioJoinError)?
@@ -1290,40 +1601,70 @@ impl LedgerStorageAdapter for LedgerStorage {
         before_signature: Option<&Signature>,
         until_signature: Option<&Signature>,
         limit: usize,
-        before_slot: Option<Slot>,
-        until_slot: Option<Slot>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {
-        let namespace = self.namespace.clone();
-        let mut hbase_conn = self.connection_pool.get().unwrap();
-        let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace);
         let address_prefix = format!("{address}/");
 
-        // first_slot: lower bound of forward scan (oldest slot to start from)
-        let (first_slot, before_transaction_index) = if let Some(slot) = until_slot {
-            (slot, u32::MAX)
-        } else if let Some(sig) = until_signature {
-            match self.lookup_slot_for_signature(&mut hbase, sig)? {
-                Some((slot, index)) => (slot, index),
-                None => return Ok(vec![]),
+        let namespace = self.namespace.clone();
+        let mut hbase_conn = self.connection_pool.get().unwrap();
+        let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace.clone());
+
+        let (first_slot, before_transaction_index, before_fallback) = match until_signature {
+            None => (0, u32::MAX, false),
+            Some(until_signature) => {
+                match hbase.get_bincode_cell("tx", until_signature.to_string()) {
+                    Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
+                    Err(hbase::Error::RowNotFound) => {
+                        if let Some(connection_pool) = &self.fallback_connection_pool {
+                            let mut hbase_conn = connection_pool.get().unwrap();
+                            let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace.clone());
+                            match hbase.get_bincode_cell("tx", until_signature.to_string()) {
+                                Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
+                                Err(hbase::Error::RowNotFound) => return Ok(vec![]),
+                                Err(err) => return Err(err.into()),
+                            }
+                        } else {
+                            return Ok(vec![])
+                        }
+                    },
+                    Err(err) => return Err(err.into()),
+                }
             }
-        } else {
-            (0, u32::MAX)
         };
 
-        // last_slot: upper bound of forward scan (newest slot to stop at)
-        let (last_slot, until_transaction_index) = if let Some(slot) = before_slot {
-            (slot, 0)
-        } else if let Some(sig) = before_signature {
-            match self.lookup_slot_for_signature(&mut hbase, sig)? {
-                Some((slot, index)) => (slot, index),
-                None => return Ok(vec![]),
+        let (last_slot, until_transaction_index, until_fallback) = match before_signature {
+            None => (Slot::MAX, 0, false),
+            Some(before_signature) => {
+                match hbase.get_bincode_cell("tx", before_signature.to_string()) {
+                    Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
+                    Err(hbase::Error::RowNotFound) => {
+                        if let Some(connection_pool) = &self.fallback_connection_pool {
+                            let mut hbase_conn = connection_pool.get().unwrap();
+                            let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace.clone());
+                            match hbase.get_bincode_cell("tx", before_signature.to_string()) {
+                                Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
+                                Err(hbase::Error::RowNotFound) => return Ok(vec![]),
+                                Err(err) => return Err(err.into()),
+                            }
+                        } else {
+                            return Ok(vec![])
+                        }
+                    },
+                    Err(err) => return Err(err.into()),
+                }
             }
-        } else {
-            (Slot::MAX, 0)
         };
 
-        debug!("get_signatures_forward: first_slot={} idx={}, last_slot={} idx={}",
-            first_slot, before_transaction_index, last_slot, until_transaction_index);
+        debug!("Got starting slot: {:?}, index: {:?}, using tx_full fallback: {:?}",
+            first_slot.clone(),
+            before_transaction_index.clone(),
+            before_fallback
+        );
+
+        debug!("Got ending slot: {:?}, index: {:?}, using tx_full fallback: {:?}",
+            last_slot.clone(),
+            until_transaction_index.clone(),
+            until_fallback
+        );
 
         let mut infos = vec![];
 
@@ -1397,10 +1738,13 @@ impl LedgerStorageAdapter for LedgerStorage {
             for tx_by_addr_info in cell_data.into_iter() {
                 debug!("Checking result [slot: {:?}, index: {:?}], signature: {:?}", slot, tx_by_addr_info.index, tx_by_addr_info.signature);
 
-                if slot == first_slot && tx_by_addr_info.index <= before_transaction_index {
+                if !before_fallback && slot == first_slot && tx_by_addr_info.index <= before_transaction_index {
+                    debug!("Skipping transaction before [slot: {:?}, index: {:?}], signature: {:?}", slot, tx_by_addr_info.index, tx_by_addr_info.signature);
                     continue;
                 }
-                if slot == last_slot && tx_by_addr_info.index >= until_transaction_index {
+
+                if !until_fallback && slot == last_slot && tx_by_addr_info.index >= until_transaction_index {
+                    debug!("Skipping transaction until [slot: {:?}, index: {:?}], signature: {:?}", slot, tx_by_addr_info.index, tx_by_addr_info.signature);
                     continue;
                 }
 
@@ -1415,13 +1759,16 @@ impl LedgerStorageAdapter for LedgerStorage {
                     tx_by_addr_info.index,
                 ));
 
+                debug!("Checking the limit: {:?}/{:?}", infos.len(), limit);
                 if infos.len() >= limit {
+                    debug!("Limit was reached, exiting loop");
                     break 'outer;
                 }
             }
         }
 
-        debug!("get_signatures_forward: returning {} entries", infos.len());
+        debug!("Returning {:?} result entries", infos.len());
+
         Ok(infos)
     }
 
@@ -1431,47 +1778,81 @@ impl LedgerStorageAdapter for LedgerStorage {
         before_signature: Option<&Signature>,
         until_signature: Option<&Signature>,
         limit: usize,
-        before_slot: Option<Slot>,
-        until_slot: Option<Slot>,
     ) -> Result<
         Vec<(
             ConfirmedTransactionStatusWithSignature,
             u32,
         )>,
     > {
-        let namespace = self.namespace.clone();
-        let mut hbase_conn = self.connection_pool.get().unwrap();
-        let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace);
         let address_prefix = format!("{address}/");
 
-        // first_slot: upper bound of backward scan (newest slot, start of scan)
-        let (first_slot, before_transaction_index) = if let Some(slot) = before_slot {
-            (slot, 0)
-        } else if let Some(sig) = before_signature {
-            match self.lookup_slot_for_signature(&mut hbase, sig)? {
-                Some((slot, index)) => (slot, index),
-                None => return Ok(vec![]),
+        let namespace = self.namespace.clone();
+        let mut hbase_conn = self.connection_pool.get().unwrap();
+        let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace.clone());
+
+        // Figure out where to start listing from based on `before_signature`
+        let (first_slot, before_transaction_index, before_fallback) = match before_signature {
+            None => (Slot::MAX, 0, false),
+            Some(before_signature) => {
+                match hbase.get_bincode_cell("tx", before_signature.to_string()) {
+                    Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
+                    Err(hbase::Error::RowNotFound) => {
+                        if let Some(connection_pool) = &self.fallback_connection_pool {
+                            let mut hbase_conn = connection_pool.get().unwrap();
+                            let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace.clone());
+                            match hbase.get_bincode_cell("tx", before_signature.to_string()) {
+                                Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
+                                Err(hbase::Error::RowNotFound) => return Ok(vec![]),
+                                Err(err) => return Err(err.into()),
+                            }
+                        } else {
+                            return Ok(vec![])
+                        }
+                    },
+                    Err(err) => return Err(err.into()),
+                }
             }
-        } else {
-            (Slot::MAX, 0)
         };
 
-        // last_slot: lower bound of backward scan (oldest slot, end of scan)
-        let (last_slot, until_transaction_index) = if let Some(slot) = until_slot {
-            (slot, u32::MAX)
-        } else if let Some(sig) = until_signature {
-            match self.lookup_slot_for_signature(&mut hbase, sig)? {
-                Some((slot, index)) => (slot, index),
-                None => return Ok(vec![]),
+        debug!("Got starting slot: {:?}, index: {:?}, using tx_full fallback: {:?}",
+            first_slot.clone(),
+            before_transaction_index.clone(),
+            before_fallback
+        );
+
+        // Figure out where to end listing from based on `until_signature`
+        let (last_slot, until_transaction_index, until_fallback) = match until_signature {
+            None => (0, u32::MAX, false),
+            Some(until_signature) => {
+                match hbase.get_bincode_cell("tx", until_signature.to_string()) {
+                    Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
+                    Err(hbase::Error::RowNotFound) => {
+                        if let Some(connection_pool) = &self.fallback_connection_pool {
+                            let mut hbase_conn = connection_pool.get().unwrap();
+                            let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace.clone());
+                            match hbase.get_bincode_cell("tx", until_signature.to_string()) {
+                                Ok(TransactionInfo { slot, index, .. }) => (slot, index, false),
+                                Err(hbase::Error::RowNotFound) => return Ok(vec![]),
+                                Err(err) => return Err(err.into()),
+                            }
+                        } else {
+                            return Ok(vec![])
+                        }
+                    },
+                    Err(err) => return Err(err.into()),
+                }
             }
-        } else {
-            (0, u32::MAX)
         };
 
-        debug!("get_signatures_backward: first_slot={} idx={}, last_slot={} idx={}",
-            first_slot, before_transaction_index, last_slot, until_transaction_index);
+        debug!("Got ending slot: {:?}, index: {:?}, using tx_full fallback: {:?}",
+            last_slot.clone(),
+            until_transaction_index.clone(),
+            until_fallback
+        );
 
         let mut infos = vec![];
+
+        debug!("Getting the starting slot length from tx-by-addr");
 
         let starting_slot_tx_len = hbase
             .get_protobuf_or_bincode_cell::<Vec<LegacyTransactionByAddrInfo>, tx_by_addr::TransactionByAddr>(
@@ -1489,7 +1870,7 @@ impl LedgerStorageAdapter for LedgerStorage {
         debug!("Got starting slot tx len: {:?}", starting_slot_tx_len);
 
         // Return the next tx-by-addr data of amount `limit` plus extra to account for the largest
-        // number that might be filtered out
+        // number that might be flitered out
         let tx_by_addr_data = hbase
             .get_row_data(
                 "tx-by-addr",
@@ -1540,11 +1921,20 @@ impl LedgerStorageAdapter for LedgerStorage {
 
             cell_data.reverse();
 
+            debug!("Filtering the result data");
+
             for tx_by_addr_info in cell_data.into_iter() {
-                if slot == first_slot && tx_by_addr_info.index >= before_transaction_index {
+                debug!("Checking result [slot: {:?}, index: {:?}], signature: {:?}", slot, tx_by_addr_info.index, tx_by_addr_info.signature);
+
+                // Filter out records before `before_transaction_index`
+                if !before_fallback && slot == first_slot && tx_by_addr_info.index >= before_transaction_index {
+                    debug!("Skipping transaction before [slot: {:?}, index: {:?}], signature: {:?}", slot, tx_by_addr_info.index, tx_by_addr_info.signature);
                     continue;
                 }
-                if slot == last_slot && tx_by_addr_info.index <= until_transaction_index {
+
+                // Filter out records after `until_transaction_index` unless fallback was used
+                if !until_fallback && slot == last_slot && tx_by_addr_info.index <= until_transaction_index {
+                    debug!("Skipping transaction until [slot: {:?}, index: {:?}], signature: {:?}", slot, tx_by_addr_info.index, tx_by_addr_info.signature);
                     continue;
                 }
 
@@ -1558,15 +1948,19 @@ impl LedgerStorageAdapter for LedgerStorage {
                     },
                     tx_by_addr_info.index,
                 ));
+                debug!("Checking the limit: {:?}/{:?}", infos.len(), limit);
                 if infos.len() >= limit {
+                    debug!("Limit was reached, exiting loop");
                     break 'outer;
                 }
             }
         }
 
-        debug!("get_signatures_backward: returning {} entries", infos.len());
+        debug!("Returning {:?} result entries", infos.len());
+
         Ok(infos)
     }
+
 
     async fn get_latest_stored_slot(&self) -> Result<Slot> {
         // Check if we should use blocks_meta table
@@ -1745,7 +2139,7 @@ impl LedgerStorageAdapter for LedgerStorage {
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, Option<ConfirmedTransactionWithStatusMeta>)>> {
         // Step 1: range scan on tx-by-addr (one HBase call)
         let sig_results = self
-            .get_confirmed_signatures_for_address(address, before_signature, until_signature, limit, reversed, None, None)
+            .get_confirmed_signatures_for_address(address, before_signature, until_signature, limit, reversed)
             .await?;
 
         if sig_results.is_empty() {

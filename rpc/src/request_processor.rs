@@ -991,8 +991,7 @@ impl JsonRpcRequestProcessor {
             (None, None)
         };
 
-        // Use slot_by_blocktime table to convert blocktime range to slot bounds (optimization).
-        // The exact block_time post-filter below guarantees correctness; this just narrows the scan.
+        // Use slot_by_blocktime table to convert blocktime range to exact slot bounds.
         let (bt_first_slot, bt_last_slot) = if let (Some(storage), Some(f)) =
             (&self.hbase_ledger_storage, filters.as_ref())
         {
@@ -1068,18 +1067,6 @@ impl JsonRpcRequestProcessor {
             TransactionStatusFilter::Succeeded => sig_results.retain(|(s, _)| s.err.is_none()),
             TransactionStatusFilter::Failed    => sig_results.retain(|(s, _)| s.err.is_some()),
             TransactionStatusFilter::Any       => {}
-        }
-
-        // Exact block_time post-filter using the block_time stored in each tx-by-addr row.
-        // May return fewer than limit (same behavior as status/tokenAccounts filters).
-        if let Some(Some(ref bt)) = filters.as_ref().map(|f| f.block_time.as_ref()) {
-            sig_results.retain(|(s, _)| {
-                let Some(block_time) = s.block_time else { return true };
-                bt.gte.map_or(true, |t| block_time >= t)
-                    && bt.gt.map_or(true, |t| block_time > t)
-                    && bt.lte.map_or(true, |t| block_time <= t)
-                    && bt.lt.map_or(true, |t| block_time < t)
-            });
         }
 
         if sig_results.is_empty() {

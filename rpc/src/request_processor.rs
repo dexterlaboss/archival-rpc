@@ -963,7 +963,6 @@ impl JsonRpcRequestProcessor {
         limit: usize,
         sort_order: Option<SortOrder>,
         details_mode: TransactionDetailsMode,
-        status_filter: TransactionStatusFilter,
         encoding: Option<UiTransactionEncoding>,
         max_supported_transaction_version: Option<u8>,
         config: RpcContextConfig,
@@ -975,25 +974,61 @@ impl JsonRpcRequestProcessor {
         // Derive `reversed` from sort_order (Asc = oldest first = forward scan)
         let reversed = sort_order.as_ref().map(|o| matches!(o, SortOrder::Asc));
 
-        // Extract slot bounds from explicit slot filters only.
-        // blockTime filtering is handled exactly via post-scan filter; no approximation needed.
-        let (before_slot, until_slot) = if let Some(ref f) = filters {
-            let before_slot = f.slot.as_ref().and_then(|s| {
-                s.lte.or_else(|| s.lt.map(|v| v.saturating_sub(1)))
+        // Extract slot bounds from explicit slot filters (both ends are exclusive in the scan).
+        // slot.lte=X → before_slot=X+1 (exclusive upper bound includes X)
+        // slot.lt=X  → before_slot=X   (exclusive upper bound excludes X)
+        // slot.gte=X → until_slot=X-1  (exclusive lower bound includes X)
+        // slot.gt=X  → until_slot=X    (exclusive lower bound excludes X)
+        let (slot_before, slot_until) = if let Some(ref f) = filters {
+            let before = f.slot.as_ref().and_then(|s| {
+                s.lte.and_then(|v| v.checked_add(1)).or(s.lt)
             });
-            let until_slot = f.slot.as_ref().and_then(|s| {
-                s.gte.or_else(|| s.gt.map(|v| v + 1))
+            let until = f.slot.as_ref().and_then(|s| {
+                s.gte.and_then(|v| v.checked_sub(1)).or(s.gt)
             });
-            (before_slot, until_slot)
+            (before, until)
         } else {
             (None, None)
         };
 
-        // Merge status filter: filters.status overrides top-level status_filter
+        // Use slot_by_blocktime table to convert blocktime range to slot bounds (optimization).
+        // The exact block_time post-filter below guarantees correctness; this just narrows the scan.
+        let (bt_first_slot, bt_last_slot) = if let (Some(storage), Some(f)) =
+            (&self.hbase_ledger_storage, filters.as_ref())
+        {
+            if let Some(bt) = f.block_time.as_ref() {
+                let gte = bt.gte.or_else(|| bt.gt.and_then(|t| t.checked_add(1)));
+                let lte = bt.lte.or_else(|| bt.lt.and_then(|t| t.checked_sub(1)));
+                if let Some(hbase) = storage.as_any().downcast_ref::<solana_storage_hbase::LedgerStorage>() {
+                    hbase.get_slots_for_blocktime_range(gte, lte).await.unwrap_or((None, None))
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
+        // Convert blocktime-derived raw slots to exclusive bounds, then AND with slot-filter bounds.
+        let bt_until = bt_first_slot.and_then(|s| s.checked_sub(1)); // include first_slot
+        let bt_before = bt_last_slot.map(|s| s.saturating_add(1));   // include last_slot
+
+        let before_slot = match (slot_before, bt_before) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let until_slot = match (slot_until, bt_until) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
+
+        // Status filter lives in filters.status (filter_by_status is merged upstream in rpc.rs)
         let status_filter = filters
             .as_ref()
             .and_then(|f| f.status.clone())
-            .unwrap_or(status_filter);
+            .unwrap_or_default();
 
         info!(
             "getTransactionsForAddress request received [address: {:?}, before: {:?}, until: {:?}, limit: {:?}, details: {:?}, sort: {:?}, before_slot: {:?}, until_slot: {:?}]",

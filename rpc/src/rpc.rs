@@ -412,7 +412,15 @@ pub mod storage_rpc_full {
             let before = pagination_token.or(before);
 
             let details_mode = transaction_details.unwrap_or_default();
-            let status_filter = filter_by_status.unwrap_or_default();
+
+            // Merge filter_by_status into filters.status (filters.status takes precedence).
+            let filters = {
+                let mut f = filters.unwrap_or_default();
+                if f.status.is_none() {
+                    f.status = filter_by_status;
+                }
+                Some(f)
+            };
 
             let limit = Some(limit.unwrap_or(MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT).min(MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT));
 
@@ -429,7 +437,6 @@ pub mod storage_rpc_full {
                         limit,
                         sort_order,
                         details_mode,
-                        status_filter,
                         encoding,
                         max_supported_transaction_version,
                         RpcContextConfig {

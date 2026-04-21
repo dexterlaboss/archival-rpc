@@ -636,28 +636,46 @@ impl LedgerStorage {
         let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace);
         let address_prefix = format!("{address}/");
 
-        // first_slot: lower bound of forward scan (oldest slot to start from)
-        let (first_slot, before_transaction_index) = if let Some(slot) = until_slot {
-            (slot, u32::MAX)
-        } else if let Some(sig) = until_signature {
-            match self.lookup_slot_for_signature(&mut hbase, sig)? {
-                Some((slot, index)) => (slot, index),
-                None => return Ok(vec![]),
+        // first_slot: lower bound of forward scan (oldest slot to start from, exclusive).
+        // When both slot bound and signature are given, AND semantics: use the tighter (max) bound.
+        let (first_slot, before_transaction_index) = match (until_slot, until_signature) {
+            (Some(slot), Some(sig)) => {
+                match self.lookup_slot_for_signature(&mut hbase, sig)? {
+                    Some((sig_slot, sig_index)) => {
+                        if slot >= sig_slot { (slot, u32::MAX) } else { (sig_slot, sig_index) }
+                    }
+                    None => return Ok(vec![]),
+                }
             }
-        } else {
-            (0, u32::MAX)
+            (Some(slot), None) => (slot, u32::MAX),
+            (None, Some(sig)) => {
+                match self.lookup_slot_for_signature(&mut hbase, sig)? {
+                    Some((slot, index)) => (slot, index),
+                    None => return Ok(vec![]),
+                }
+            }
+            (None, None) => (0, u32::MAX),
         };
 
-        // last_slot: upper bound of forward scan (newest slot to stop at)
-        let (last_slot, until_transaction_index) = if let Some(slot) = before_slot {
-            (slot, 0)
-        } else if let Some(sig) = before_signature {
-            match self.lookup_slot_for_signature(&mut hbase, sig)? {
-                Some((slot, index)) => (slot, index),
-                None => return Ok(vec![]),
+        // last_slot: upper bound of forward scan (newest slot to stop at, exclusive).
+        // When both slot bound and signature are given, AND semantics: use the tighter (min) bound.
+        let (last_slot, until_transaction_index) = match (before_slot, before_signature) {
+            (Some(slot), Some(sig)) => {
+                match self.lookup_slot_for_signature(&mut hbase, sig)? {
+                    Some((sig_slot, sig_index)) => {
+                        if slot <= sig_slot { (slot, 0) } else { (sig_slot, sig_index) }
+                    }
+                    None => return Ok(vec![]),
+                }
             }
-        } else {
-            (Slot::MAX, 0)
+            (Some(slot), None) => (slot, 0),
+            (None, Some(sig)) => {
+                match self.lookup_slot_for_signature(&mut hbase, sig)? {
+                    Some((slot, index)) => (slot, index),
+                    None => return Ok(vec![]),
+                }
+            }
+            (None, None) => (Slot::MAX, 0),
         };
 
         debug!("get_signatures_forward_with_slot_bounds: first_slot={} idx={}, last_slot={} idx={}",
@@ -784,28 +802,46 @@ impl LedgerStorage {
         let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace);
         let address_prefix = format!("{address}/");
 
-        // first_slot: upper bound of backward scan (newest slot, start of scan)
-        let (first_slot, before_transaction_index) = if let Some(slot) = before_slot {
-            (slot, 0)
-        } else if let Some(sig) = before_signature {
-            match self.lookup_slot_for_signature(&mut hbase, sig)? {
-                Some((slot, index)) => (slot, index),
-                None => return Ok(vec![]),
+        // first_slot: upper bound of backward scan (newest slot, start of scan, exclusive).
+        // When both slot bound and signature are given, AND semantics: use the tighter (min) bound.
+        let (first_slot, before_transaction_index) = match (before_slot, before_signature) {
+            (Some(slot), Some(sig)) => {
+                match self.lookup_slot_for_signature(&mut hbase, sig)? {
+                    Some((sig_slot, sig_index)) => {
+                        if slot <= sig_slot { (slot, 0) } else { (sig_slot, sig_index) }
+                    }
+                    None => return Ok(vec![]),
+                }
             }
-        } else {
-            (Slot::MAX, 0)
+            (Some(slot), None) => (slot, 0),
+            (None, Some(sig)) => {
+                match self.lookup_slot_for_signature(&mut hbase, sig)? {
+                    Some((slot, index)) => (slot, index),
+                    None => return Ok(vec![]),
+                }
+            }
+            (None, None) => (Slot::MAX, 0),
         };
 
-        // last_slot: lower bound of backward scan (oldest slot, end of scan)
-        let (last_slot, until_transaction_index) = if let Some(slot) = until_slot {
-            (slot, u32::MAX)
-        } else if let Some(sig) = until_signature {
-            match self.lookup_slot_for_signature(&mut hbase, sig)? {
-                Some((slot, index)) => (slot, index),
-                None => return Ok(vec![]),
+        // last_slot: lower bound of backward scan (oldest slot, end of scan, exclusive).
+        // When both slot bound and signature are given, AND semantics: use the tighter (max) bound.
+        let (last_slot, until_transaction_index) = match (until_slot, until_signature) {
+            (Some(slot), Some(sig)) => {
+                match self.lookup_slot_for_signature(&mut hbase, sig)? {
+                    Some((sig_slot, sig_index)) => {
+                        if slot >= sig_slot { (slot, u32::MAX) } else { (sig_slot, sig_index) }
+                    }
+                    None => return Ok(vec![]),
+                }
             }
-        } else {
-            (0, u32::MAX)
+            (Some(slot), None) => (slot, u32::MAX),
+            (None, Some(sig)) => {
+                match self.lookup_slot_for_signature(&mut hbase, sig)? {
+                    Some((slot, index)) => (slot, index),
+                    None => return Ok(vec![]),
+                }
+            }
+            (None, None) => (0, u32::MAX),
         };
 
         debug!("get_signatures_backward_with_slot_bounds: first_slot={} idx={}, last_slot={} idx={}",
@@ -906,6 +942,68 @@ impl LedgerStorage {
 
         debug!("get_signatures_backward_with_slot_bounds: returning {} entries", infos.len());
         Ok(infos)
+    }
+
+    // Parse the slot from a slot_by_blocktime row key of the form "{blocktime_hex}/{slot_hex}".
+    fn parse_blocktime_row_key(row_key: Option<&String>) -> Result<Option<Slot>> {
+        match row_key {
+            None => Ok(None),
+            Some(key) => {
+                let (_, slot_hex) = key.split_once('/').ok_or_else(|| {
+                    hbase::Error::ObjectCorrupt(format!("Invalid slot_by_blocktime row key: {key}"))
+                })?;
+                u64::from_str_radix(slot_hex, 16)
+                    .map(Some)
+                    .map_err(|e| hbase::Error::ObjectCorrupt(e.to_string()).into())
+            }
+        }
+    }
+
+    // Return the first slot whose block_time >= blocktime (forward scan from blocktime prefix).
+    fn get_slot_for_blocktime_ge_blocking(&self, blocktime: i64) -> Result<Option<Slot>> {
+        let namespace = self.namespace.clone();
+        let mut hbase_conn = self.connection_pool.get().unwrap();
+        let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace);
+        let start_key = format!("{blocktime:016x}/");
+        let row_keys = hbase.get_row_keys("slot_by_blocktime", Some(start_key), None, 1, false)?;
+        Self::parse_blocktime_row_key(row_keys.first())
+    }
+
+    // Return the last slot whose block_time <= blocktime (reversed scan from just past blocktime).
+    fn get_slot_for_blocktime_le_blocking(&self, blocktime: i64) -> Result<Option<Slot>> {
+        let namespace = self.namespace.clone();
+        let mut hbase_conn = self.connection_pool.get().unwrap();
+        let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace);
+        // Scan backward from just past T: (T+1) prefix comes after all rows at T.
+        let start_key = format!("{:016x}/", blocktime.saturating_add(1));
+        let row_keys = hbase.get_row_keys("slot_by_blocktime", Some(start_key), None, 1, true)?;
+        Self::parse_blocktime_row_key(row_keys.first())
+    }
+
+    /// Look up the first and last slots that bound a blocktime range from the slot_by_blocktime
+    /// table (only available on the SIGS HBase). Returns (first_slot_ge_gte, last_slot_le_lte).
+    pub async fn get_slots_for_blocktime_range(
+        &self,
+        blocktime_gte: Option<i64>,
+        blocktime_lte: Option<i64>,
+    ) -> Result<(Option<Slot>, Option<Slot>)> {
+        let first_slot = if let Some(t) = blocktime_gte {
+            self.runtime.spawn_blocking({
+                let s = self.clone();
+                move || s.get_slot_for_blocktime_ge_blocking(t)
+            }).await.map_err(Error::TokioJoinError)??
+        } else {
+            None
+        };
+        let last_slot = if let Some(t) = blocktime_lte {
+            self.runtime.spawn_blocking({
+                let s = self.clone();
+                move || s.get_slot_for_blocktime_le_blocking(t)
+            }).await.map_err(Error::TokioJoinError)??
+        } else {
+            None
+        };
+        Ok((first_slot, last_slot))
     }
 }
 

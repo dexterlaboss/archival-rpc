@@ -1061,6 +1061,8 @@ impl JsonRpcRequestProcessor {
             return Ok(GetTransactionsForAddressResponse { data: vec![], pagination_token: None });
         };
         let sig_elapsed = t0.elapsed();
+        // Capture before any filtering so next-page callers skip the whole batch we scanned.
+        let pagination_token = sig_results.last().map(|(s, _)| s.signature.to_string());
 
         // Apply status filter
         match status_filter {
@@ -1070,8 +1072,8 @@ impl JsonRpcRequestProcessor {
         }
 
         if sig_results.is_empty() {
-            info!("getTransactionsForAddress: sig scan took {:?}, 0 results after filter", sig_elapsed);
-            return Ok(GetTransactionsForAddressResponse { data: vec![], pagination_token: None });
+            debug!("getTransactionsForAddress: sig scan took {:?}, 0 results after filter", sig_elapsed);
+            return Ok(GetTransactionsForAddressResponse { data: vec![], pagination_token });
         }
 
         // Token account filtering requires full tx data even in signatures mode
@@ -1083,8 +1085,7 @@ impl JsonRpcRequestProcessor {
 
         // Signatures-only mode: skip tx fetch unless token filter needs full data
         if details_mode == TransactionDetailsMode::Signatures && !needs_full_for_token_filter {
-            let pagination_token = sig_results.last().map(|(s, _)| s.signature.to_string());
-            info!("getTransactionsForAddress: sig scan {:?} ({} sigs, signatures mode), total {:?}",
+            debug!("getTransactionsForAddress: sig scan {:?} ({} sigs, signatures mode), total {:?}",
                 sig_elapsed, sig_results.len(), t0.elapsed());
             let data = sig_results
                 .into_iter()
@@ -1111,28 +1112,7 @@ impl JsonRpcRequestProcessor {
                         vec![None; signatures.len()]
                     })
             } else {
-                let primary = self.hbase_ledger_storage.as_ref();
-                let fallback = self.fallback_ledger_storage.as_ref();
-                let fetch_futures: Vec<_> = signatures
-                    .iter()
-                    .map(|sig| {
-                        let sig = *sig;
-                        async move {
-                            if let Some(storage) = primary {
-                                if let Ok(Some(tx)) = storage.get_confirmed_transaction(&sig).await {
-                                    return Some(tx);
-                                }
-                            }
-                            if let Some(storage) = fallback {
-                                if let Ok(Some(tx)) = storage.get_confirmed_transaction(&sig).await {
-                                    return Some(tx);
-                                }
-                            }
-                            None
-                        }
-                    })
-                    .collect();
-                futures::future::join_all(fetch_futures).await
+                vec![None; signatures.len()]
             };
         let tx_elapsed = t1.elapsed();
 
@@ -1151,9 +1131,7 @@ impl JsonRpcRequestProcessor {
             })
             .unzip();
 
-        let pagination_token = sig_results.last().map(|(s, _)| s.signature.to_string());
-
-        info!(
+        debug!(
             "getTransactionsForAddress: sig scan {:?} ({} sigs), tx fetch {:?} ({} txs, {} after token filter), total {:?}",
             sig_elapsed, signatures.len(), tx_elapsed,
             tx_results.iter().filter(|t| t.is_some()).count(),

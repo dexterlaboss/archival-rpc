@@ -8,7 +8,6 @@ use {
             verify_and_parse_signatures_for_address_params,
             MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT,
             TransactionDetailsMode,
-            TransactionStatusFilter,
             GetTransactionsForAddressResponse,
             SortOrder,
             RpcTransactionFilters,
@@ -64,7 +63,6 @@ pub struct RpcTransactionsForAddressConfig {
     pub limit: Option<usize>,
     pub sort_order: Option<SortOrder>,
     pub transaction_details: Option<TransactionDetailsMode>,
-    pub filter_by_status: Option<TransactionStatusFilter>,
     pub filters: Option<RpcTransactionFilters>,
     pub pagination_token: Option<String>,
     pub encoding: Option<solana_transaction_status_client_types::UiTransactionEncoding>,
@@ -399,7 +397,6 @@ pub mod storage_rpc_full {
                 limit,
                 sort_order,
                 transaction_details,
-                filter_by_status,
                 filters,
                 pagination_token,
                 encoding,
@@ -418,14 +415,7 @@ pub mod storage_rpc_full {
 
             let details_mode = transaction_details.unwrap_or_default();
 
-            // Merge filter_by_status into filters.status (filters.status takes precedence).
-            let filters = {
-                let mut f = filters.unwrap_or_default();
-                if f.status.is_none() {
-                    f.status = filter_by_status;
-                }
-                Some(f)
-            };
+            let filters = filters;
 
             let limit = Some(limit.unwrap_or(MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT).min(MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT));
 

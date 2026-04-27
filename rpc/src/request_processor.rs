@@ -93,14 +93,6 @@ pub enum TransactionDetailsMode {
     Signatures,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum TransactionStatusFilter {
-    #[default]
-    Any,
-    Succeeded,
-    Failed,
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -133,7 +125,6 @@ pub struct RpcSlotRange {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcTransactionFilters {
-    pub status: Option<TransactionStatusFilter>,
     pub block_time: Option<RpcBlockTimeRange>,
     pub slot: Option<RpcSlotRange>,
 }
@@ -985,11 +976,6 @@ impl JsonRpcRequestProcessor {
             (a, b) => a.or(b),
         };
 
-        // Status filter lives in filters.status (filter_by_status is merged upstream in rpc.rs)
-        let status_filter = filters
-            .as_ref()
-            .and_then(|f| f.status.clone())
-            .unwrap_or_default();
 
         info!(
             "getTransactionsForAddress request received [address: {:?}, before: {:?}, until: {:?}, limit: {:?}, details: {:?}, sort: {:?}, before_slot: {:?}, until_slot: {:?}]",
@@ -1026,15 +1012,8 @@ impl JsonRpcRequestProcessor {
         // Capture before any filtering so next-page callers skip the whole batch we scanned.
         let pagination_token = sig_results.last().map(|(s, _)| s.signature.to_string());
 
-        // Apply status filter
-        match status_filter {
-            TransactionStatusFilter::Succeeded => sig_results.retain(|(s, _)| s.err.is_none()),
-            TransactionStatusFilter::Failed    => sig_results.retain(|(s, _)| s.err.is_some()),
-            TransactionStatusFilter::Any       => {}
-        }
-
         if sig_results.is_empty() {
-            debug!("getTransactionsForAddress: sig scan took {:?}, 0 results after filter", sig_elapsed);
+            debug!("getTransactionsForAddress: sig scan took {:?}, 0 results", sig_elapsed);
             return Ok(GetTransactionsForAddressResponse { data: vec![], pagination_token });
         }
 

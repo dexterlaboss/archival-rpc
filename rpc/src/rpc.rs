@@ -405,14 +405,6 @@ pub mod storage_rpc_full {
                 min_context_slot,
             } = config.unwrap_or_default();
 
-            // For backward scan (default/Desc), resume via `before`; for forward (Asc), via `until`.
-            let is_forward = matches!(sort_order, Some(SortOrder::Asc));
-            let (before, until) = if is_forward {
-                (before, pagination_token.or(until))
-            } else {
-                (pagination_token.or(before), until)
-            };
-
             let details_mode = transaction_details.unwrap_or_default();
 
             let filters = filters;
@@ -430,6 +422,7 @@ pub mod storage_rpc_full {
                         before,
                         until,
                         limit,
+                        pagination_token,
                         sort_order,
                         details_mode,
                         encoding,

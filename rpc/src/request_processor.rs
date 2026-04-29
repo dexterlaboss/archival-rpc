@@ -935,6 +935,7 @@ impl JsonRpcRequestProcessor {
         before: Option<Signature>,
         until: Option<Signature>,
         limit: usize,
+        pagination_token: Option<String>,
         sort_order: Option<SortOrder>,
         details_mode: TransactionDetailsMode,
         encoding: Option<UiTransactionEncoding>,
@@ -944,6 +945,11 @@ impl JsonRpcRequestProcessor {
     ) -> Result<GetTransactionsForAddressResponse> {
         let commitment = config.commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
+
+        let pagination_token: Option<(Slot, u32)> = pagination_token
+            .map(|t| parse_pagination_token(&t))
+            .transpose()
+            .map_err(|_| Error::invalid_params("Invalid pagination token"))?;
 
         // Derive `reversed` from sort_order (Asc = oldest first = forward scan)
         let reversed = sort_order.as_ref().map(|o| matches!(o, SortOrder::Asc));
@@ -1013,7 +1019,7 @@ impl JsonRpcRequestProcessor {
 
         // Step 1: range scan on tx-by-addr (one HBase call)
         let t0 = Instant::now();
-        let mut sig_results = if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
+        let sig_results = if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
             hbase_ledger_storage
                 .get_confirmed_signatures_for_address_with_slot_bounds(
                     &address,
@@ -1023,6 +1029,7 @@ impl JsonRpcRequestProcessor {
                     reversed,
                     before_slot,
                     until_slot,
+                    pagination_token,
                 )
                 .await
                 .unwrap_or_default()
@@ -1031,7 +1038,7 @@ impl JsonRpcRequestProcessor {
         };
         let sig_elapsed = t0.elapsed();
         // Capture before any filtering so next-page callers skip the whole batch we scanned.
-        let pagination_token = sig_results.last().map(|(s, _)| s.signature.to_string());
+        let pagination_token = sig_results.last().map(|(s, i)| format!("{}:{}", s.slot, i));
 
         if sig_results.is_empty() {
             debug!("getTransactionsForAddress: sig scan took {:?}, 0 results", sig_elapsed);
@@ -1547,3 +1554,9 @@ pub fn create_validator_exit(exit: &Arc<AtomicBool>) -> Arc<RwLock<Exit>> {
 }
 
 
+fn parse_pagination_token(s: &str) -> anyhow::Result<(Slot, u32)> {
+    let (slot, index) = s
+        .split_once(':')
+        .ok_or(anyhow::anyhow!("expected slot:index"))?;
+    Ok((slot.parse()?, index.parse()?))
+}

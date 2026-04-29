@@ -630,6 +630,7 @@ impl LedgerStorage {
         limit: usize,
         before_slot: Option<Slot>,
         until_slot: Option<Slot>,
+        pagination_token: Option<(Slot, u32)>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {
         let namespace = self.namespace.clone();
         let mut hbase_conn = self.connection_pool.get().unwrap();
@@ -638,7 +639,7 @@ impl LedgerStorage {
 
         // first_slot: lower bound of forward scan (oldest slot to start from, exclusive).
         // When both slot bound and signature are given, AND semantics: use the tighter (max) bound.
-        let (first_slot, before_transaction_index) = match (until_slot, until_signature) {
+        let (mut first_slot, mut before_transaction_index) = match (until_slot, until_signature) {
             (Some(slot), Some(sig)) => {
                 match self.lookup_slot_for_signature(&mut hbase, sig)? {
                     Some((sig_slot, sig_index)) => {
@@ -656,6 +657,14 @@ impl LedgerStorage {
             }
             (None, None) => (0, u32::MAX),
         };
+
+        // If pagination token is provided, use it as the new lower bound if it's tighter than the existing bounds
+        if let Some((pagination_slot, pagination_index)) = pagination_token {
+            if pagination_slot > first_slot || (pagination_slot == first_slot && pagination_index >= before_transaction_index) {
+                first_slot = pagination_slot;
+                before_transaction_index = pagination_index;
+            }
+        }
 
         // last_slot: upper bound of forward scan (newest slot to stop at, exclusive).
         // When both slot bound and signature are given, AND semantics: use the tighter (min) bound.
@@ -791,6 +800,7 @@ impl LedgerStorage {
         limit: usize,
         before_slot: Option<Slot>,
         until_slot: Option<Slot>,
+        pagination_token: Option<(Slot, u32)>,
     ) -> Result<
         Vec<(
             ConfirmedTransactionStatusWithSignature,
@@ -804,7 +814,7 @@ impl LedgerStorage {
 
         // first_slot: upper bound of backward scan (newest slot, start of scan, exclusive).
         // When both slot bound and signature are given, AND semantics: use the tighter (min) bound.
-        let (first_slot, before_transaction_index) = match (before_slot, before_signature) {
+        let (mut first_slot, mut before_transaction_index) = match (before_slot, before_signature) {
             (Some(slot), Some(sig)) => {
                 match self.lookup_slot_for_signature(&mut hbase, sig)? {
                     Some((sig_slot, sig_index)) => {
@@ -822,6 +832,14 @@ impl LedgerStorage {
             }
             (None, None) => (Slot::MAX, 0),
         };
+
+        // If pagination token is provided, use it as the new upper bound if it's tighter than the existing bounds
+        if let Some((pagination_slot, pagination_index)) = pagination_token {
+            if pagination_slot < first_slot || (pagination_slot == first_slot && pagination_index <= before_transaction_index) {
+                first_slot = pagination_slot;
+                before_transaction_index = pagination_index;
+            }
+        }
 
         // last_slot: lower bound of backward scan (oldest slot, end of scan, exclusive).
         // When both slot bound and signature are given, AND semantics: use the tighter (max) bound.
@@ -1677,6 +1695,7 @@ impl LedgerStorageAdapter for LedgerStorage {
         reversed: Option<bool>,
         before_slot: Option<Slot>,
         until_slot: Option<Slot>,
+        pagination_token: Option<(Slot, u32)>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {
         self.runtime.spawn_blocking({
             let self_clone = self.clone();
@@ -1685,9 +1704,9 @@ impl LedgerStorageAdapter for LedgerStorage {
             let until_signature = until_signature.copied();
             move || {
                 if reversed.unwrap_or(false) {
-                    self_clone.get_signatures_forward_with_slot_bounds(&address, before_signature.as_ref(), until_signature.as_ref(), limit, before_slot, until_slot)
+                    self_clone.get_signatures_forward_with_slot_bounds(&address, before_signature.as_ref(), until_signature.as_ref(), limit, before_slot, until_slot, pagination_token)
                 } else {
-                    self_clone.get_signatures_backward_with_slot_bounds(&address, before_signature.as_ref(), until_signature.as_ref(), limit, before_slot, until_slot)
+                    self_clone.get_signatures_backward_with_slot_bounds(&address, before_signature.as_ref(), until_signature.as_ref(), limit, before_slot, until_slot, pagination_token)
                 }
             }
         }).await.map_err(Error::TokioJoinError)?

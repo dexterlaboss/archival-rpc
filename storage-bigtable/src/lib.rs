@@ -739,6 +739,7 @@ impl LedgerStorageAdapter for LedgerStorage {
         _reversed: Option<bool>,
         _before_slot: Option<Slot>,
         _until_slot: Option<Slot>,
+        _pagination_token: Option<(Slot, u32)>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {
         Err(Error::StorageBackendError(Box::new(std::io::Error::new(
             std::io::ErrorKind::Other,

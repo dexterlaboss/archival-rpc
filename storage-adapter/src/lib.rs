@@ -495,6 +495,7 @@ pub trait LedgerStorageAdapter: Send + Sync {
         reversed: Option<bool>,
         before_slot: Option<Slot>,
         until_slot: Option<Slot>,
+        pagination_token: Option<(Slot, u32)>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>>;
 
     async fn get_transactions_for_address(

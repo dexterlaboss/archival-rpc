@@ -6,6 +6,11 @@ use {
             verify_signature,
             verify_pubkey,
             verify_and_parse_signatures_for_address_params,
+            MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT,
+            TransactionDetailsMode,
+            GetTransactionsForAddressResponse,
+            SortOrder,
+            RpcTransactionFilters,
         },
         deprecated::*,
     },
@@ -49,6 +54,23 @@ use {
         UiConfirmedBlock,
     },
 };
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcTransactionsForAddressConfig {
+    pub before: Option<String>,
+    pub until: Option<String>,
+    pub limit: Option<usize>,
+    pub sort_order: Option<SortOrder>,
+    pub transaction_details: Option<TransactionDetailsMode>,
+    pub filters: Option<RpcTransactionFilters>,
+    pub pagination_token: Option<String>,
+    pub encoding: Option<solana_transaction_status_client_types::UiTransactionEncoding>,
+    pub max_supported_transaction_version: Option<u8>,
+    #[serde(flatten)]
+    pub commitment: Option<CommitmentConfig>,
+    pub min_context_slot: Option<Slot>,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -193,6 +215,14 @@ pub mod storage_rpc_full {
             address: String,
             config: Option<RpcSignaturesForAddressConfig>,
         ) -> BoxFuture<Result<Vec<RpcConfirmedTransactionStatusWithSignature>>>;
+
+        #[rpc(meta, name = "getTransactionsForAddress")]
+        fn get_transactions_for_address(
+            &self,
+            meta: Self::Metadata,
+            address: String,
+            config: Option<RpcTransactionsForAddressConfig>,
+        ) -> BoxFuture<Result<GetTransactionsForAddressResponse>>;
 
         #[rpc(meta, name = "getFirstAvailableBlock")]
         fn get_first_available_block(&self, meta: Self::Metadata) -> BoxFuture<Result<Slot>>;
@@ -351,6 +381,59 @@ pub mod storage_rpc_full {
                         },
                     )
                         .await
+                }),
+            }
+        }
+
+        fn get_transactions_for_address(
+            &self,
+            meta: Self::Metadata,
+            address: String,
+            config: Option<RpcTransactionsForAddressConfig>,
+        ) -> BoxFuture<Result<GetTransactionsForAddressResponse>> {
+            let RpcTransactionsForAddressConfig {
+                before,
+                until,
+                limit,
+                sort_order,
+                transaction_details,
+                filters,
+                pagination_token,
+                encoding,
+                max_supported_transaction_version,
+                commitment,
+                min_context_slot,
+            } = config.unwrap_or_default();
+
+            let details_mode = transaction_details.unwrap_or_default();
+
+            let filters = filters;
+
+            let limit = Some(limit.unwrap_or(MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT).min(MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT));
+
+            let verification =
+                verify_and_parse_signatures_for_address_params(address, before, until, limit);
+
+            match verification {
+                Err(err) => Box::pin(future::err(err)),
+                Ok((address, before, until, limit)) => Box::pin(async move {
+                    meta.get_transactions_for_address(
+                        address,
+                        before,
+                        until,
+                        limit,
+                        pagination_token,
+                        sort_order,
+                        details_mode,
+                        encoding,
+                        max_supported_transaction_version,
+                        RpcContextConfig {
+                            commitment,
+                            min_context_slot,
+                        },
+                        filters,
+                    )
+                    .await
                 }),
             }
         }
@@ -633,6 +716,7 @@ pub mod tests {
             let meta = JsonRpcRequestProcessor::new(
                 config,
                 validator_exit,
+                None,
                 None,
                 None,
             );

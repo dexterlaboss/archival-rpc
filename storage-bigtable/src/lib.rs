@@ -709,7 +709,7 @@ impl LedgerStorageAdapter for LedgerStorage {
         _address: &Pubkey,
         _before_signature: Option<&Signature>,
         _until_signature: Option<&Signature>,
-        _limit: usize
+        _limit: usize,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {
         Err(Error::StorageBackendError(Box::new(std::io::Error::new(
             std::io::ErrorKind::Other,
@@ -722,7 +722,24 @@ impl LedgerStorageAdapter for LedgerStorage {
         _address: &Pubkey,
         _before_signature: Option<&Signature>,
         _until_signature: Option<&Signature>,
-        _limit: usize
+        _limit: usize,
+    ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {
+        Err(Error::StorageBackendError(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Method not supported",
+        ))))
+    }
+
+    async fn get_confirmed_signatures_for_address_with_slot_bounds(
+        &self,
+        _address: &Pubkey,
+        _before_signature: Option<&Signature>,
+        _until_signature: Option<&Signature>,
+        _limit: usize,
+        _reversed: Option<bool>,
+        _before_slot: Option<Slot>,
+        _until_slot: Option<Slot>,
+        _pagination_token: Option<(Slot, u32)>,
     ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, u32)>> {
         Err(Error::StorageBackendError(Box::new(std::io::Error::new(
             std::io::ErrorKind::Other,
@@ -873,6 +890,24 @@ impl LedgerStorageAdapter for LedgerStorage {
     async fn get_confirmed_block_from_legacy_storage(&self, slot: Slot, _use_cache: bool) -> Result<ConfirmedBlock> {
         // Placeholder implementation
         Err(Error::BlockNotFound(slot))
+    }
+
+    async fn get_transactions_for_address(
+        &self,
+        _address: &Pubkey,
+        _before_signature: Option<&Signature>,
+        _until_signature: Option<&Signature>,
+        _limit: usize,
+        _reversed: Option<bool>,
+    ) -> Result<Vec<(ConfirmedTransactionStatusWithSignature, Option<ConfirmedTransactionWithStatusMeta>)>> {
+        Err(Error::UnsupportedTransactionEncoding)
+    }
+
+    async fn get_confirmed_transactions_batch(
+        &self,
+        _signatures: &[Signature],
+    ) -> Result<Vec<Option<ConfirmedTransactionWithStatusMeta>>> {
+        Err(Error::UnsupportedTransactionEncoding)
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

@@ -5,6 +5,7 @@ use {
         custom_error::RpcCustomError,
     },
     futures::future::OptionFuture,
+    serde_json,
     jsonrpc_core::{
         Error, Metadata, Result
     },
@@ -40,6 +41,7 @@ use {
         ConfirmedBlock,
         ConfirmedTransactionStatusWithSignature,
         ConfirmedTransactionWithStatusMeta,
+        TransactionWithStatusMeta,
     },
     solana_transaction_status_client_types::{
         EncodedConfirmedTransactionWithStatusMeta,
@@ -81,6 +83,81 @@ pub const MAX_REQUEST_BODY_SIZE: usize = 50 * (1 << 10); // 50kB
 pub const MAX_GENESIS_ARCHIVE_UNPACKED_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 
 pub const MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT: usize = 10_000;
+pub const MAX_GET_TRANSACTIONS_FOR_ADDRESS_LIMIT: usize = 1_000;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum TransactionDetailsMode {
+    Full,
+    #[default]
+    Signatures,
+}
+
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SortOrder {
+    #[default]
+    Desc,
+    Asc,
+}
+
+/// Comparison-operator range for blockTime (Unix timestamps).
+/// Matches Helius filter format: filters.blockTime.gte / .gt / .lte / .lt
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RpcBlockTimeRange {
+    pub gte: Option<i64>,
+    pub gt: Option<i64>,
+    pub lte: Option<i64>,
+    pub lt: Option<i64>,
+}
+
+/// Comparison-operator range for slot numbers.
+/// Matches Helius filter format: filters.slot.gte / .gt / .lte / .lt
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RpcSlotRange {
+    pub gte: Option<Slot>,
+    pub gt: Option<Slot>,
+    pub lte: Option<Slot>,
+    pub lt: Option<Slot>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcTransactionFilters {
+    pub block_time: Option<RpcBlockTimeRange>,
+    pub slot: Option<RpcSlotRange>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTransactionsForAddressSignature {
+    #[serde(flatten)]
+    transaction: RpcConfirmedTransactionStatusWithSignature,
+    transaction_index: u32,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTransactionsForAddressTransaction {
+    #[serde(flatten)]
+    transaction: EncodedConfirmedTransactionWithStatusMeta,
+    transaction_index: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GetTransactionsForAddressResponseTransaction {
+    Signatures(GetTransactionsForAddressSignature),
+    Full(GetTransactionsForAddressTransaction),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTransactionsForAddressResponse {
+    pub data: Vec<GetTransactionsForAddressResponseTransaction>,
+    pub pagination_token: Option<String>,
+}
 
 type Rewards = Vec<Reward>;
 
@@ -201,6 +278,7 @@ pub struct RpcHBaseConfig {
     pub hdfs_url: String,
     pub hdfs_path: String,
     pub fallback_hbase_address: Option<String>,
+    pub hbase_address_tx: Option<String>,
     pub timeout: Option<Duration>,
     // pub block_cache: Option<NonZeroUsize>,
     pub use_md5_row_key_salt: bool,
@@ -232,6 +310,7 @@ impl Default for RpcHBaseConfig {
             hdfs_url,
             hdfs_path,
             fallback_hbase_address: None,
+            hbase_address_tx: None,
             timeout: None,
             // block_cache: None,
             use_md5_row_key_salt: false,
@@ -255,6 +334,7 @@ pub struct JsonRpcRequestProcessor {
     rpc_service_exit: Arc<RwLock<Exit>>,
     hbase_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
     fallback_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
+    tx_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
     genesis_config: Option<GenesisConfig>,
     rpc_node_client: Option<Arc<jsonrpsee::http_client::HttpClient>>,
 }
@@ -269,6 +349,7 @@ impl Clone for JsonRpcRequestProcessor {
             rpc_service_exit: Arc::clone(&self.rpc_service_exit),
             hbase_ledger_storage: self.hbase_ledger_storage.as_ref().map(|storage| storage.clone_box()),
             fallback_ledger_storage: self.fallback_ledger_storage.as_ref().map(|storage| storage.clone_box()),
+            tx_ledger_storage: self.tx_ledger_storage.as_ref().map(|storage| storage.clone_box()),
             genesis_config: self.genesis_config.clone(),
             rpc_node_client: self.rpc_node_client.clone(),
         }
@@ -288,6 +369,7 @@ impl JsonRpcRequestProcessor {
         rpc_service_exit: Arc<RwLock<Exit>>,
         hbase_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
         fallback_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
+        tx_ledger_storage: Option<Box<dyn solana_storage_adapter::LedgerStorageAdapter>>,
     ) -> Self {
     // ) -> (Self, Receiver<TransactionInfo>) {
     //     let (_sender, receiver) = unbounded();
@@ -321,6 +403,7 @@ impl JsonRpcRequestProcessor {
             rpc_service_exit,
             hbase_ledger_storage,
             fallback_ledger_storage,
+            tx_ledger_storage,
             genesis_config,
             rpc_node_client,
         }
@@ -846,6 +929,193 @@ impl JsonRpcRequestProcessor {
         }
     }
 
+    pub async fn get_transactions_for_address(
+        &self,
+        address: Pubkey,
+        before: Option<Signature>,
+        until: Option<Signature>,
+        limit: usize,
+        pagination_token: Option<String>,
+        sort_order: Option<SortOrder>,
+        details_mode: TransactionDetailsMode,
+        encoding: Option<UiTransactionEncoding>,
+        max_supported_transaction_version: Option<u8>,
+        config: RpcContextConfig,
+        filters: Option<RpcTransactionFilters>,
+    ) -> Result<GetTransactionsForAddressResponse> {
+        let commitment = config.commitment.unwrap_or_default();
+        check_is_at_least_confirmed(commitment)?;
+
+        let pagination_token: Option<(Slot, u32)> = pagination_token
+            .map(|t| parse_pagination_token(&t))
+            .transpose()
+            .map_err(|_| Error::invalid_params("Invalid pagination token"))?;
+
+        // Derive `reversed` from sort_order (Asc = oldest first = forward scan)
+        let reversed = sort_order.as_ref().map(|o| matches!(o, SortOrder::Asc));
+
+        // Extract slot bounds from explicit slot filters (both ends are exclusive in the scan).
+        // slot.lte=X → before_slot=X+1 (exclusive upper bound includes X)
+        // slot.lt=X  → before_slot=X   (exclusive upper bound excludes X)
+        // slot.gte=X → until_slot=X-1  (exclusive lower bound includes X)
+        // slot.gt=X  → until_slot=X    (exclusive lower bound excludes X)
+        let (slot_before, slot_until) = if let Some(ref f) = filters {
+            let before = f.slot.as_ref().and_then(|s| {
+                s.lte.and_then(|v| v.checked_add(1)).or(s.lt)
+            });
+            let until = f.slot.as_ref().and_then(|s| {
+                s.gte.and_then(|v| v.checked_sub(1)).or(s.gt)
+            });
+            (before, until)
+        } else {
+            (None, None)
+        };
+
+        // Use slot_by_blocktime table to convert blocktime range to exact slot bounds.
+        let (bt_first_slot, bt_last_slot) = if let (Some(storage), Some(f)) =
+            (&self.hbase_ledger_storage, filters.as_ref())
+        {
+            if let Some(bt) = f.block_time.as_ref() {
+                let gte = bt.gte.or_else(|| bt.gt.and_then(|t| t.checked_add(1)));
+                let lte = bt.lte.or_else(|| bt.lt.and_then(|t| t.checked_sub(1)));
+                if let Some(hbase) = storage.as_any().downcast_ref::<solana_storage_hbase::LedgerStorage>() {
+                    hbase.get_slots_for_blocktime_range(gte, lte).await.unwrap_or((None, None))
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
+        // Convert blocktime-derived raw slots to exclusive bounds, then AND with slot-filter bounds.
+        let bt_until = bt_first_slot.and_then(|s| s.checked_sub(1)); // include first_slot
+        let bt_before = bt_last_slot.map(|s| s.saturating_add(1));   // include last_slot
+
+        let before_slot = match (slot_before, bt_before) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let until_slot = match (slot_until, bt_until) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
+
+
+        info!(
+            "getTransactionsForAddress request received [address: {:?}, before: {:?}, until: {:?}, limit: {:?}, details: {:?}, sort: {:?}, before_slot: {:?}, until_slot: {:?}]",
+            address, before, until, limit, details_mode, sort_order, before_slot, until_slot
+        );
+
+        if !self.config.enable_rpc_transaction_history {
+            return Err(RpcCustomError::TransactionHistoryNotAvailable.into());
+        }
+
+        let encoding = encoding.unwrap_or(UiTransactionEncoding::Json);
+        // Default to supporting versioned (v0) transactions
+        let max_supported_transaction_version = max_supported_transaction_version.or(Some(0));
+
+        // Step 1: range scan on tx-by-addr (one HBase call)
+        let t0 = Instant::now();
+        let sig_results = if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
+            hbase_ledger_storage
+                .get_confirmed_signatures_for_address_with_slot_bounds(
+                    &address,
+                    before.as_ref(),
+                    until.as_ref(),
+                    limit,
+                    reversed,
+                    before_slot,
+                    until_slot,
+                    pagination_token,
+                )
+                .await
+                .unwrap_or_default()
+        } else {
+            return Ok(GetTransactionsForAddressResponse { data: vec![], pagination_token: None });
+        };
+        let sig_elapsed = t0.elapsed();
+        // Capture before any filtering so next-page callers skip the whole batch we scanned.
+        let pagination_token = sig_results.last().map(|(s, i)| format!("{}:{}", s.slot, i));
+
+        if sig_results.is_empty() {
+            debug!("getTransactionsForAddress: sig scan took {:?}, 0 results", sig_elapsed);
+            return Ok(GetTransactionsForAddressResponse { data: vec![], pagination_token });
+        }
+
+        if details_mode == TransactionDetailsMode::Signatures {
+            debug!("getTransactionsForAddress: sig scan {:?} ({} sigs, signatures mode), total {:?}",
+                sig_elapsed, sig_results.len(), t0.elapsed());
+            let data = sig_results
+                .into_iter()
+                .map(|(confirmed_tx_signature, transaction_index)| {
+                    let mut transaction: RpcConfirmedTransactionStatusWithSignature =
+                        confirmed_tx_signature.into();
+                    transaction.confirmation_status =
+                        Some(TransactionConfirmationStatus::Finalized);
+                    GetTransactionsForAddressResponseTransaction::Signatures(
+                        GetTransactionsForAddressSignature {
+                            transaction,
+                            transaction_index,
+                        },
+                    )
+                })
+                .collect();
+            return Ok(GetTransactionsForAddressResponse { data, pagination_token });
+        }
+
+        let signatures: Vec<Signature> = sig_results.iter().map(|(s, _)| s.signature).collect();
+
+        // Step 2: batch-fetch full transactions (single HBase getRows call)
+        let t1 = Instant::now();
+        let tx_results: Vec<Option<ConfirmedTransactionWithStatusMeta>> =
+            if let Some(tx_storage) = &self.tx_ledger_storage {
+                tx_storage
+                    .get_confirmed_transactions_batch(&signatures)
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!("Batch tx fetch failed: {:?}", e);
+                        vec![None; signatures.len()]
+                    })
+            } else {
+                vec![None; signatures.len()]
+            };
+        let tx_elapsed = t1.elapsed();
+
+        debug!(
+            "getTransactionsForAddress: sig scan {:?} ({} sigs), tx fetch {:?} ({} txs), total {:?}",
+            sig_elapsed, signatures.len(), tx_elapsed,
+            tx_results.iter().filter(|t| t.is_some()).count(),
+            t0.elapsed(),
+        );
+
+        let mut data = Vec::with_capacity(tx_results.len());
+        for (confirmed_tx_opt, (_, transaction_index)) in
+            tx_results.into_iter().zip(sig_results.into_iter())
+        {
+            if let Some(confirmed_tx) = confirmed_tx_opt {
+                match confirmed_tx
+                    .encode(encoding, max_supported_transaction_version)
+                    .map_err(RpcCustomError::from)
+                {
+                    Ok(transaction) => {
+                        data.push(GetTransactionsForAddressResponseTransaction::Full(
+                            GetTransactionsForAddressTransaction {
+                                transaction,
+                                transaction_index,
+                            },
+                        ))
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            }
+        }
+
+        Ok(GetTransactionsForAddressResponse { data, pagination_token })
+    }
+
     pub async fn get_first_available_block(&self) -> Slot {
         if let Some(hbase_ledger_storage) = &self.hbase_ledger_storage {
             let hbase_slot = hbase_ledger_storage
@@ -1284,3 +1554,9 @@ pub fn create_validator_exit(exit: &Arc<AtomicBool>) -> Arc<RwLock<Exit>> {
 }
 
 
+fn parse_pagination_token(s: &str) -> anyhow::Result<(Slot, u32)> {
+    let (slot, index) = s
+        .split_once(':')
+        .ok_or(anyhow::anyhow!("expected slot:index"))?;
+    Ok((slot.parse()?, index.parse()?))
+}

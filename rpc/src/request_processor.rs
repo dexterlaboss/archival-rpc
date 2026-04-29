@@ -129,14 +129,35 @@ pub struct RpcTransactionFilters {
     pub slot: Option<RpcSlotRange>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTransactionsForAddressSignature {
+    #[serde(flatten)]
+    transaction: RpcConfirmedTransactionStatusWithSignature,
+    transaction_index: u32,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTransactionsForAddressTransaction {
+    #[serde(flatten)]
+    transaction: EncodedConfirmedTransactionWithStatusMeta,
+    transaction_index: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GetTransactionsForAddressResponseTransaction {
+    Signatures(GetTransactionsForAddressSignature),
+    Full(GetTransactionsForAddressTransaction),
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetTransactionsForAddressResponse {
-    pub data: Vec<serde_json::Value>,
+    pub data: Vec<GetTransactionsForAddressResponseTransaction>,
     pub pagination_token: Option<String>,
 }
-
-
 
 type Rewards = Vec<Reward>;
 
@@ -1022,10 +1043,17 @@ impl JsonRpcRequestProcessor {
                 sig_elapsed, sig_results.len(), t0.elapsed());
             let data = sig_results
                 .into_iter()
-                .map(|(s, _)| {
-                    let mut item: RpcConfirmedTransactionStatusWithSignature = s.into();
-                    item.confirmation_status = Some(TransactionConfirmationStatus::Finalized);
-                    serde_json::to_value(item).unwrap_or(serde_json::Value::Null)
+                .map(|(confirmed_tx_signature, transaction_index)| {
+                    let mut transaction: RpcConfirmedTransactionStatusWithSignature =
+                        confirmed_tx_signature.into();
+                    transaction.confirmation_status =
+                        Some(TransactionConfirmationStatus::Finalized);
+                    GetTransactionsForAddressResponseTransaction::Signatures(
+                        GetTransactionsForAddressSignature {
+                            transaction,
+                            transaction_index,
+                        },
+                    )
                 })
                 .collect();
             return Ok(GetTransactionsForAddressResponse { data, pagination_token });
@@ -1057,10 +1085,22 @@ impl JsonRpcRequestProcessor {
         );
 
         let mut data = Vec::with_capacity(tx_results.len());
-        for tx_opt in tx_results {
-            if let Some(tx) = tx_opt {
-                match tx.encode(encoding, max_supported_transaction_version).map_err(RpcCustomError::from) {
-                    Ok(encoded_tx) => data.push(serde_json::to_value(encoded_tx).unwrap_or(serde_json::Value::Null)),
+        for (confirmed_tx_opt, (_, transaction_index)) in
+            tx_results.into_iter().zip(sig_results.into_iter())
+        {
+            if let Some(confirmed_tx) = confirmed_tx_opt {
+                match confirmed_tx
+                    .encode(encoding, max_supported_transaction_version)
+                    .map_err(RpcCustomError::from)
+                {
+                    Ok(transaction) => {
+                        data.push(GetTransactionsForAddressResponseTransaction::Full(
+                            GetTransactionsForAddressTransaction {
+                                transaction,
+                                transaction_index,
+                            },
+                        ))
+                    }
                     Err(e) => return Err(e.into()),
                 }
             }

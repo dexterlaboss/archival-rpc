@@ -982,7 +982,7 @@ impl LedgerStorage {
         let namespace = self.namespace.clone();
         let mut hbase_conn = self.connection_pool.get().unwrap();
         let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace);
-        let start_key = format!("{blocktime:016x}/");
+        let start_key = format!("{blocktime:016x}/{:016x}", 0u64);
         let row_keys = hbase.get_row_keys("slot_by_blocktime", Some(start_key), None, 1, false)?;
         Self::parse_blocktime_row_key(row_keys.first())
     }
@@ -992,8 +992,7 @@ impl LedgerStorage {
         let namespace = self.namespace.clone();
         let mut hbase_conn = self.connection_pool.get().unwrap();
         let mut hbase = HBase::new_borrowed(&mut *hbase_conn, namespace);
-        // Scan backward from just past T: (T+1) prefix comes after all rows at T.
-        let start_key = format!("{:016x}/", blocktime.saturating_add(1));
+        let start_key = format!("{blocktime:016x}/{:016x}", u64::MAX);
         let row_keys = hbase.get_row_keys("slot_by_blocktime", Some(start_key), None, 1, true)?;
         Self::parse_blocktime_row_key(row_keys.first())
     }

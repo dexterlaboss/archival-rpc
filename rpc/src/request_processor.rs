@@ -426,8 +426,21 @@ impl JsonRpcRequestProcessor {
         if let Err(e) = result {
             debug!("Block error: {}", e);
         }
-        if let Err(solana_storage_adapter::Error::SlotSkipped { slot }) = result {
-            return Err(RpcCustomError::SlotSkipped { slot: *slot }.into());
+        if let Err(solana_storage_adapter::Error::BlocksMissingInRange {
+            start_slot,
+            end_slot,
+            limit,
+        }) = result
+        {
+            return Err(RpcCustomError::BlocksMissingInRange {
+                start_slot: *start_slot,
+                end_slot: *end_slot,
+                limit: *limit,
+            }
+            .into());
+        }
+        if let Err(solana_storage_adapter::Error::BlockNotAvailable { slot }) = result {
+            return Err(RpcCustomError::BlockNotAvailable { slot: *slot }.into());
         }
         if let Err(solana_storage_adapter::Error::BlockNotFound(slot)) = result {
             return Err(RpcCustomError::LongTermStorageSlotSkipped { slot: *slot }.into());

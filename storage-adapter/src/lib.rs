@@ -89,6 +89,9 @@ pub enum Error {
         end_slot: Option<Slot>,
         limit: usize,
     },
+
+    #[error("BlockNotAvailable")]
+    BlockNotAvailable { slot: Slot },
 }
 
 impl std::convert::From<std::io::Error> for Error {

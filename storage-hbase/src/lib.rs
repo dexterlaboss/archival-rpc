@@ -1141,9 +1141,9 @@ impl LedgerStorageAdapter for LedgerStorage {
             )
             .map_err(|err| match err {
                 hbase::Error::RowNotFound => {
-                    match Self::get_blocks_meta_range(&mut hbase, slot, None, 1).as_deref() {
-                        // no missing blocks error so this slot is skipped
-                        Ok([_next_block]) => Error::SlotSkipped{ slot },
+                    match Self::get_blocks_meta_range(&mut hbase, slot, None, 1) {
+                        Err(e @ Error::BlocksMissingInRange { .. }) => e,
+                        Ok(v) if v.is_empty() => Error::BlockNotAvailable { slot },
                         _ => Error::BlockNotFound(slot),
                     }
                 }
